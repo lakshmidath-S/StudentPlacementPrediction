@@ -1,5 +1,5 @@
-# PlacementPulse AI - Streamlit Executive Dark Theme Configuration
-# Ported from prediction.txt design system
+# Adaptive Placement Intelligence - Streamlit dark theme
+
 
 [theme]
 base = "dark"
@@ -77,5 +77,7 @@ primaryColor = "#60A5FA"
 
 [server]
 headless = true
-enableCORS = false
+# enableCORS = false conflicts with XSRF protection: Streamlit overrides it
+# back to true and warns on every start. XSRF protection stays on, because
+# uploads here carry other people's student records.
 enableXsrfProtection = true

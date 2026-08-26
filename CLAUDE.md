@@ -1,170 +1,178 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Guidance for Claude Code (claude.ai/code) when working in this repository.
 
 ## Overview
 
-Binary classifier predicting student placement (`Placed` / `NotPlaced`) from the Kaggle
-`ruchikakumbhar/placement-prediction-dataset` (10,000 rows × 12 cols). Three models are trained
-and served side by side: Logistic Regression, Random Forest, XGBoost.
+An LLM-orchestrated AutoML service. A non-technical user uploads a spreadsheet;
+a language model plans the pipeline for it; a deterministic executor runs the
+plan; the result is one joblib the user owns and predicts with until they choose
+to retrain.
 
-There are **two independent consumers** of the trained models:
-
-- `api/` — FastAPI service, loads bundles at startup, one prediction per request, logs to SQLite.
-- `frontend/` — Streamlit dashboard, **standalone**: it loads the same artifacts from disk and runs
-  inference in-process. It does **not** call the API. There is no HTTP client and no `BACKEND_URL`;
-  the dashboard runs fine with the API stopped.
+There is **one consumer**: `app.py`, a Streamlit app. There is no API, no
+worker, and no pre-trained model in the repository. `placement_ai/` is
+UI-agnostic and imports Streamlit nowhere except an optional secrets lookup.
 
 ## Commands
 
 ```bash
-# Setup (Windows venv is what the .bat runners assume)
-pip install -r requirements.txt
-
-# Full training pipeline — MUST be run from the repo root, in this order.
-python download_dataset.py        # -> data/raw/student_placement.csv
-python preprocessing.py           # -> data/processed/*.csv, normalization_stats.json,
-                                  #    part2/models/preprocessor.joblib
-python part2/logistic_regression_model.py
-python part2/random_forest_model.py
-python part3/xgboost_model.py
-python part4/explainability_fairness.py    # SHAP + fairness
-python part8/evaluation_suite.py           # three-way comparison, cost-sensitive thresholds
-
-# Windows convenience runners (each cd's to the repo root itself, then uses venv\Scripts\python.exe)
-part2\run_pipeline.bat    # download -> preprocess -> LR -> RF -> comparison -> report
-part3\run_pipeline.bat
-part4\run_pipeline.bat
-
-# Fast retrain (skips hyperparameter search; reads whatever preprocessing.py last wrote)
-python scripts/train_models_fast.py
-
-# Promote a trained model into artifacts/production/ (computes SHA-256s, writes manifest.json,
-# copies normalization_stats.json into the bundle)
-python scripts/package_model.py --model-name logistic_regression --model-version 2026.08.18-lr.1 \
-  --preprocessor part2/models/preprocessor.joblib \
-  --model part2/models/logistic_regression_best.joblib --overwrite
-
-# Regenerate drift baselines — required whenever models or the dataset change
-python scripts/generate_baseline_metrics.py
-
 # Run
-uvicorn api.main:app --reload --port 8000    # /docs, /redoc
-streamlit run frontend/app.py
+streamlit run app.py
 
-# Test / lint / type-check
-pytest tests/ -v                             # full suite (test_api.py auto-skips without artifacts)
-pytest tests/test_drift.py -v                # single file
-pytest tests/test_drift.py::TestComputePSI::test_identical_distributions_zero_psi -v  # single test
-ruff check .                                 # run before finishing any change
-pyright --project pyrightconfig.json         # advisory in CI, does not block
+# Test / lint — no API key needed for any of it
+pytest tests/ -q
+pytest tests/test_dsl.py -q                              # single file
+pytest tests/test_dsl.py::test_ratio_by_zero_is_zero_not_infinity -q   # single test
+ruff check .                                             # run before finishing any change
+pyright --project pyrightconfig.json                     # advisory in CI
 
-python scripts/smoke_test_models.py          # loads all 3 production bundles, one prediction each
+# The CI gate: creates a workspace, trains on the bundled sample, saves,
+# reloads from disk, predicts, explains, batch-scores, checks drift.
+python scripts/smoke_test.py
+
+# Force the rule-based planner even with a key present
+LLM_PROVIDER=off streamlit run app.py
 ```
 
-CI (`.github/workflows/ci.yml`) runs ruff → pyright (advisory) → pytest (excluding `test_api.py`) →
-`smoke_test_models.py`. The smoke test is a hard gate and only passes because
-`artifacts/production/**/*.joblib` are committed via `.gitignore` negation rules.
+CI runs ruff → pyright (advisory) → pytest → `smoke_test.py`, with
+`LLM_PROVIDER=off`. **The rule-based path is what CI verifies**, deliberately.
 
 ## Architecture
 
-### The artifact bundle contract
+### The LLM emits plans, never code
 
-`artifacts/production/<model>/` is the unit of deployment. Each bundle contains four files that must
-stay mutually consistent:
+`placement_ai/plans.py` is the contract. Every planning stage returns JSON
+validated against a pydantic model, and a deterministic executor carries it out.
+There is no `eval`, no expression parser, and no passthrough for a code string.
 
-| File | Role |
-|---|---|
-| `model.joblib` | the fitted estimator |
-| `preprocessor.joblib` | the `ColumnTransformer` (StandardScaler + OneHotEncoder) fitted in `preprocessing.py` |
-| `normalization_stats.json` | frozen count-feature maxima — a **fitted parameter**, not config |
-| `manifest.json` | `model_name`, `model_version`, and SHA-256 of the other three |
+A derived feature is `{name, op, inputs, params}` where `op` must be a member of
+`FeatureOp`. **Adding an operation means editing three places, and all three are
+enforced by tests:**
 
-`verify_and_load_bundle()` in `api/predictor.py` validates all of this at startup: existence,
-manifest/model-key match, every checksum, a transform smoke-test through `engineer_features()`, and
-a `predict`/`predict_proba` smoke-test. A failing bundle does not crash the server — `api/main.py`
-records the error and `/health` reports `degraded` (1–2 loaded) or `unavailable` (0 loaded).
+1. `FeatureOp` + `OP_ARITY` (+ `CATEGORICAL_OPS` / `STATEFUL_OPS` if relevant) in `plans.py`
+2. the implementation in `pipeline/dsl.py` — `apply_spec`, and `fit_spec` if stateful
+3. `OP_REFERENCE` in `planner/prompts.py`, so the model is told it exists
 
-Bundles are self-contained on purpose: `data/processed/` is gitignored, so a fresh clone can serve
-without ever running `preprocessing.py`.
+`tests/test_dsl.py::test_every_declared_op_is_implemented` parametrises over the
+whole enum and will fail on a missing implementation.
 
-### feature_engineering.py is the single source of truth
+The LLM never sees a data row — only `DatasetProfile.to_payload()`. Keep it that
+way; this is a multi-tenant service and rows are other people's records.
 
-Everything — API, dashboard, simulator, training scripts, `predict_sample.py` — imports
-`engineer_features()` from the repo root. **Never reimplement these formulas locally**; that
-duplication is what broke the last schema migration.
+### The fallback ladder
 
-The flow is: raw CSV headers → `normalize_columns()` (mixed-case → snake_case, done exactly once) →
-8 raw numerical + 2 raw categorical → `engineer_features()` adds 21 derived columns → 29 numerical +
-2 categorical reach the fitted `ColumnTransformer`. Raw columns are **not** model inputs on their own.
+Each stage: generate → validate → repair once from the validation error → fall
+back to `planner/heuristic.py`. Transport errors (`LLMError`) skip the repair —
+showing the model its own JSON does not fix a rate limit.
 
-`FEATURE_RANGES` supplies both dashboard slider bounds and API validation bounds; values outside it
-are extrapolation.
+**The heuristic planner is not a stub.** It writes a complete trainable plan
+from the profile alone and reaches ROC-AUC 0.8813 on the bundled sample with no
+network. It runs in CI, on a fresh clone, and for any stage the LLM fails.
+Breaking it breaks the product's floor. If you change it, `pytest
+tests/test_training.py` is the check that matters.
 
-### Normalization stats
+Provenance is per stage, not per run — a real run routinely mixes LLM and
+heuristic stages, and the model card says which was which.
 
-The count features (`internships`, `projects`, `workshops_certifications`) have no natural upper
-bound, so their `*_normalized` forms are scaled by maxima fitted **once on the full training set** by
-`preprocessing.py`. `engineer_features()` reuses that frozen constant so one student, a filtered
-cohort, and the full dataset all land on the same scale.
+### `sanitize.py` is the trust boundary
 
-If stats are missing, `engineer_features()` **raises rather than inferring** them from the batch at
-hand. Inferring divides each value by itself, pinning every `*_normalized` feature to 1.0 and
-`portfolio_strength` to 100 — wrong answers with no error. Do not add a fallback.
+Pydantic checks a plan is *well-formed*. `planner/sanitize.py` checks it is
+*true about this dataset* — every referenced column exists, numeric ops are not
+pointed at text, weight vectors match input counts. Pydantic cannot do this
+because it never sees the profile.
 
-`fit_normalization_stats()` writes the file with `newline="\n"` deliberately: the file is SHA-256'd
-into every manifest, and CRLF on Windows would break the hash when checked out on Linux CI.
+The filter/raise split is deliberate: a few bad features get dropped with a
+warning, but past `_FEATURE_REJECT_LIMIT` (60%) the reply is treated as a misread
+and raises `PlanRejected`, which triggers the repair pass.
 
-### API layer
+### One bundle, one file
 
-`BasePredictor` (ABC) → `LogisticRegressionPredictor` / `RandomForestPredictor` / `XGBoostPredictor`.
-All three take a `StudentInput`, build the same one-row engineered frame (using **their own bundle's**
-stats), and return a common `PredictionResponse`. Adding a model means adding a `MODEL_BUNDLES` entry
-in `api/config.py` plus a `PREDICTOR_TYPES` entry in `api/main.py`.
+`workspaces/<org>/models/<version>/pipeline.joblib` holds the entire fitted
+chain: `CleaningTransformer → FeatureSynthesizer → ColumnTransformer →
+estimator`. Nothing is reconstructed at prediction time. `manifest.json` beside
+it carries a SHA-256 verified on load, plus the full plan, all candidate scores,
+importances, the input schema and the drift baseline.
 
-Endpoints: `GET /health`, `GET /api/v1/models`, `POST /api/v1/predict`, `GET /api/v1/drift`,
-`GET /logs/summary`. `student_id` and `placement_status` are deliberately not accepted.
+**Never split a fitted parameter out of the bundle.** The previous version of
+this repo kept `normalization_stats.json` next to the model and it was a
+recurring source of breakage.
 
-`api/logger.py` persists every prediction to SQLite (best-effort, never raises); path overridable via
-the `PREDICTION_LOG_DB` env var. `api/drift.py` computes PSI between the recent prediction window and
-each bundle's `baseline_metrics.json` — stale baselines make drift detection meaningless.
+### Everything fitted lives in a trailing-underscore attribute
+
+`normalize_max` divides by the maximum seen in training, stored in
+`FeatureSynthesizer.states_`. Recomputing it during `transform` is the classic
+silent corruption here: a one-row prediction divides the value by itself and
+hands the model `1.0` for everybody, and every prediction still returns a
+plausible number. The same applies to imputation values, kept category levels,
+and the decision threshold.
+
+If you add a transformer, fit on one frame and assert against a *different* one.
+A round-trip on the training set will pass either way.
 
 ## Gotchas
 
-- **`preprocessing.py` and the `part*/` scripts are top-level scripts with relative paths and no
-  `__main__` guard.** They must be invoked from the repo root.
-- **sklearn version skew is a live concern.** `requirements.txt` pins `1.9.0` but `requirements-ci.txt`
-  pins `1.6.1` to match the serialized artifacts. sklearn dropped `LogisticRegression.multi_class` in
-  1.7 while older runtimes still read it during `predict()`, so both `api/predictor.py` and
-  `frontend/batch_predictor.py` restore the attribute after load. Keep the shim in both.
-- **`BatchPredictor._resolve()` prefers `artifacts/production/<model>/` and falls back to the local
-  training outputs** in `part2/models/` and `part3/models/`. A stale local file can silently shadow
-  what you expect if production is absent.
-- **Streamlit reruns the whole script on every widget change.** `app.py` is top-level script code,
-  not a function tree.
-  - `st.session_state["active_model"]` is the single source of truth for which model runs; every
-    inference call must forward it. Panels that ignore it silently render a different model than the
-    one the user picked.
-  - `load_system()` is `@st.cache_resource` — shared across sessions, never mutate what it returns.
-  - `compute_benchmark_suite()` is `@st.cache_data` keyed on dataset length alone; anything
-    model-specific must be computed for all models inside it and selected at render time.
-  - Expander open/close is client-side and triggers no rerun, so expensive work sits behind an
-    explicit `st.checkbox`.
-  - A failed prediction calls `st.stop()` on purpose, so an artifact/schema mismatch surfaces instead
-    of hiding behind placeholder probabilities. Do not substitute defaults.
-- **The derived features do not raise ROC-AUC** (0.8780 → 0.8778). They exist to power the skill-gap
-  radar, readiness scores, the what-if simulator, and legible SHAP output. Don't delete them as dead
-  weight, and don't expect tuning them to move the metric.
-- **Uploaded CSVs accept either header style** — `normalize_columns()` maps raw mixed-case headers, so
-  validation runs on normalized names and maps back through `COLUMN_RENAME_MAP` for user-facing errors.
+- **The decision threshold is a fitted parameter, chosen on out-of-fold
+  predictions.** Never on the test split — that tunes against the data used to
+  report the final numbers. `WorkspacePredictor._label_from` applies it rather
+  than taking an argmax; an argmax would serve different decisions than the ones
+  that were evaluated.
+- **Class weighting uses `sample_weight` for every algorithm**, not each one's
+  own `class_weight` / `scale_pos_weight`. They are equivalent, but only
+  `sample_weight` is accepted by all of them. Do not reintroduce the
+  per-algorithm branch.
+- **Cross-validation is hand-rolled in `runner._cross_validate`.** `cross_val_predict`
+  cannot carry `sample_weight` without enabling scikit-learn metadata routing
+  globally, which a library module has no business doing. The out-of-fold matrix
+  does double duty: it scores the candidate and it is where the threshold is chosen.
+- **Row-count changes happen in the runner, not in a transformer.** A transformer
+  that dropped rows would desynchronise X from y inside a Pipeline.
+- **`_emit` keeps the stage index monotonic.** Stages do not complete in list
+  order — the planner finishes `select` before the runner finishes its own
+  `engineer` pass — and a progress bar running backwards reads as a failure.
+- **Identifier detection requires whole numbers or strings.** A continuous float
+  column is normally unique per row and is exactly the kind of column a model
+  wants most; treating high cardinality alone as an identifier left some datasets
+  with no features at all.
+- **The drift baseline stores true bucket shares, not just quantile edges.**
+  Edges look like they imply `1/n` per bucket, but a discrete column
+  (`backlogs`, 0–8) deduplicates to a few bins holding unequal shares, and
+  assuming uniformity reported PSI 0.32 against the training data itself.
+- **The baseline is captured at training time.** Recomputing it from recent
+  traffic compares the present against itself and reports calm regardless.
+- **Streamlit reruns `app.py` top to bottom on every widget change.**
+  - Nothing lives in a local variable across a rerun. State is either in
+    `st.session_state` or on disk.
+  - A button press survives exactly one rerun. `use_sample` is parked in session
+    state for this reason.
+  - Training results are re-rendered from the *saved bundle*, not held in memory,
+    so they survive any later interaction.
+  - `load_predictor` is `@st.cache_resource` keyed on `(workspace_id, version,
+    checksum)`. The checksum is in the key so a corrupted or replaced file is a
+    cache miss rather than a stale object.
+  - Use `width="stretch"`, not `use_container_width=True` — the latter is past
+    its removal date and warns on every call.
+- **Explanations are ablation, not SHAP.** One prediction per field against the
+  training-typical value. It works on any pipeline the planner assembles and runs
+  inline. The limitation — one field at a time misses interactions, so deltas
+  rank rather than decompose — is stated in the UI and should stay stated.
+- **Global importance is permutation over the raw columns**, through the whole
+  pipeline. Permuting a derived feature tells a placement officer nothing.
+- **Classification only.** A continuous target is refused before planning with an
+  explanation. Do not silently bucket it.
+- **`workspaces/` is tenant data.** Gitignored, and it must stay that way.
 
 ## Conventions
 
-- ruff at the repo root: line length 100, rules `E,W,F,I,UP,B,C4,SIM`, first-party `api` and
-  `feature_engineering`.
-- `E402` is per-file-ignored for the five modules that live outside the root package and must insert
-  the repo root onto `sys.path` before importing `feature_engineering`. Keep that bootstrap above the
-  local imports.
-- `frontend/app.py` sections use a `# ===` divider with a numbered title; tabs use the same divider
-  with a `TAB N:` title. Keep numbering contiguous when adding or removing one.
-- Streamlit UI copy: material icons in labels (`:material/bar_chart:`) and sentence casing.
+- ruff at the repo root: line length 100, rules `E,W,F,I,UP,B,C4,SIM`, target
+  py311, first-party `placement_ai`.
+- `app.py` sections use a `# ===` divider with a numbered title. Keep the
+  numbering contiguous when adding or removing one.
+- Streamlit UI copy: material icons in labels (`:material/bar_chart:`) and
+  sentence casing.
+- Every user-facing message says what to do about it. Compare
+  `TrainingError("invalid target")` with the messages in `runner._guard_target`.
+- Every generated `rationale` / `reason` field is shown to a non-technical user.
+  The prompts say so; keep them saying so.
+- Comments explain *why*, especially where the obvious implementation is wrong.
+  Most comments in `dsl.py`, `transformers.py` and `drift.py` mark a real bug
+  that was hit — do not delete them as noise.

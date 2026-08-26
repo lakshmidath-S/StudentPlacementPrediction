@@ -1,448 +1,256 @@
-# Student Placement Prediction
+# Adaptive Placement Intelligence
 
-A production-grade Machine Learning system that predicts whether a student is likely to be placed, based on academic performance, technical skills, soft skills, internships, projects, work experience, certifications, attendance, and backlogs.
+A self-service machine-learning service. A placement officer uploads their own
+spreadsheet, a language model plans the entire pipeline around it, and they walk
+away with a trained model that belongs to them — no data scientist, no code, no
+retraining until they ask for it.
 
-[![CI](https://github.com/alfreddevy2020-kch/StudentPlacementPrediction/actions/workflows/ci.yml/badge.svg)](https://github.com/alfreddevy2020-kch/StudentPlacementPrediction/actions/workflows/ci.yml)
-
----
-
-## 📌 Project Overview
-
-The system follows a complete end-to-end Machine Learning lifecycle:
-
-```
-Raw Dataset → EDA → Visualisation → Preprocessing
-    → Model Training (LR · RF · XGBoost)
-    → Explainability & Fairness (SHAP)
-    → Artifact Packaging → REST API → Streamlit Dashboard
-    → CI/CD (GitHub Actions) → Cloud Deployment (Render · Streamlit Cloud)
-    → Prediction Logging (SQLite) → Drift Monitoring (PSI)
-```
+[![CI](https://github.com/lakshmidath-S/StudentPlacementPrediction/actions/workflows/ci.yml/badge.svg)](https://github.com/lakshmidath-S/StudentPlacementPrediction/actions/workflows/ci.yml)
 
 ---
 
-## 🎯 Objective
+## The goal
 
-Build a machine learning system that predicts:
+Placement prediction is normally shipped as *one model, trained once, on one
+college's data*. That model is useless to the college next door: their columns
+are different, their grading scale is different, and their intake is different.
 
-- `0` → Not Placed
-- `1` → Placed
+This system inverts that. The product is not a model — it is the **thing that
+builds models**.
 
-The system helps placement cells identify students who need additional preparation, and provides explainable, auditable predictions.
+Every organisation gets a workspace. They upload whatever spreadsheet they
+already keep. An LLM reads the *shape* of that data and writes the plan: which
+columns matter, which leak the answer, how to repair the messy ones, what
+derived features are worth computing, which algorithms to try and how much to
+weight each. A deterministic executor carries the plan out, scores the result
+honestly, and saves it as a single file they own.
 
----
+Two actions, and only two:
 
-## 📊 Dataset
-
-Source: **`ruchikakumbhar/placement-prediction-dataset`** on Kaggle —
-**10,000 student records**, 12 columns. See [SCHEMA.md](SCHEMA.md) for why
-this dataset was chosen over the alternatives.
-
-### Features Used (10 input features)
-
-Column names are normalised to snake_case on load by
-`feature_engineering.normalize_columns()`; the raw CSV headers are
-mixed-case (e.g. `Workshops/Certifications`).
-
-| Feature | Type | Range | Description |
-|---|---|---|---|
-| cgpa | float | 6.5–9.1 | College CGPA (10-point scale) |
-| ssc_marks | int | 55–90 | Secondary school (class 10) percentage |
-| hsc_marks | int | 57–88 | Higher secondary (class 12) percentage |
-| aptitude_test_score | int | 60–90 | Aptitude / mock-test score |
-| soft_skills_rating | float | 3.0–4.8 | Soft-skills rating (5-point scale) |
-| internships | int | 0–2 | Number of internships completed |
-| projects | int | 0–3 | Number of projects completed |
-| workshops_certifications | int | 0–3 | Workshops and certifications earned |
-| extracurricular_activities | Yes/No | — | Participation in extracurriculars |
-| placement_training | Yes/No | — | Received institutional placement training |
-| placement_status | Placed/NotPlaced | — | **Target** — placement outcome |
-
-### Removed Columns
-
-- `student_id` — identifier only, no predictive content
-
-This dataset ships no post-outcome fields (no salary/package column), so
-the target itself is the only leakage source to drop.
-
-### Not present in this dataset
-
-`backlogs`, `attendance`, department/branch, and demographic attributes
-(gender, college tier) are **absent from the source data** and are
-therefore not modelled rather than fabricated. See [SCHEMA.md](SCHEMA.md)
-for the consequences on department reporting and the Part 4 bias audit.
-
-### Class Distribution
-
-| Class | Count | Percentage |
+| | What the user does | What they get |
 |---|---|---|
-| Not Placed | 5,803 | 58.03 % |
-| Placed | 4,197 | 41.97 % |
+| **Train** | Upload a spreadsheet, name the outcome column | A scored, explained, versioned model saved to their workspace |
+| **Predict** | Fill in a form, or upload a file of records | Predictions, the reasons behind them, and what would change them |
 
-The target is mildly imbalanced — models use `scale_pos_weight` / class
-weighting and are evaluated on ROC-AUC and F1, not accuracy alone.
+They repeat step 2 for as long as they like. Step 1 happens again only when they
+choose — or when the drift monitor tells them their intake has moved away from
+what the model learned.
 
----
+### What changed from v1
 
-## 🗂️ Repository Structure
-
-```
-StudentPlacementPrediction/
-├── .github/
-│   └── workflows/
-│       └── ci.yml                  ← GitHub Actions CI pipeline
-│
-├── api/                            ← FastAPI prediction service
-│   ├── config.py                   ← artifact registry & app metadata
-│   ├── drift.py                    ← PSI drift detector
-│   ├── logger.py                   ← SQLite prediction logger
-│   ├── main.py                     ← FastAPI app + endpoints
-│   ├── predictor.py                ← model loader/predictor classes
-│   └── schemas.py                  ← Pydantic request/response schemas
-│
-├── artifacts/
-│   └── production/                 ← ✅ committed — reviewed model bundles
-│       ├── logistic_regression/    (model.joblib · preprocessor.joblib · manifest.json · baseline_metrics.json)
-│       ├── random_forest/          (model.joblib · preprocessor.joblib · manifest.json · baseline_metrics.json)
-│       └── xgboost/                (model.joblib · preprocessor.joblib · manifest.json · baseline_metrics.json)
-│
-├── docs/
-│   └── DEPLOYMENT.md               ← deployment guide & retraining policy
-│
-├── frontend/
-│   └── app.py                      ← Streamlit dashboard
-│
-├── logs/
-│   └── .gitkeep                    ← predictions.db written here at runtime (gitignored)
-│
-├── part2/                          ← Logistic Regression & Random Forest training
-├── part3/                          ← XGBoost training
-├── part4/                          ← SHAP explainability & fairness audit
-│
-├── scripts/
-│   ├── package_model.py            ← packages a model into artifacts/production/
-│   └── smoke_test_models.py        ← CI model health check
-│
-├── tests/
-│   ├── test_schemas.py             ← Pydantic validation tests
-│   ├── test_drift.py               ← PSI logic tests
-│   ├── test_logger.py              ← SQLite logger tests
-│   └── test_api.py                 ← FastAPI integration tests
-│
-├── .streamlit/
-│   └── secrets.toml                ← BACKEND_URL (gitignored)
-│
-├── pyproject.toml                  ← Project metadata, Ruff linter & Pytest config
-├── render.yaml                     ← Render free-tier deployment blueprint
-├── requirements.txt                ← full dependencies
-├── requirements-ci.txt             ← minimal CI dependencies (CPU-only)
-└── SETUP.md                        ← detailed local setup guide
-```
-
----
-
-## 🤖 Part 2 — Model Training (Logistic Regression + Random Forest)
-
-All Part 2 files live in `part2/`.
-
-### Quick Start
-
-```bash
-python -m venv venv
-venv\Scripts\python.exe -m pip install -r requirements.txt
-part2\run_pipeline.bat      # downloads data → preprocesses → trains → evaluates
-```
-
-### Key Results
-
-| Metric | Logistic Regression | Random Forest |
+| | Before | Now |
 |---|---|---|
-| ROC-AUC | 0.9354 | 1.0000 |
-| F1 Score (tuned threshold) | 0.6949 | 1.0000 |
-| Avg Precision (PR-AUC) | 0.7718 | 1.0000 |
-| Brier Score | 0.1110 | 0.0042 |
-| Optimal threshold | 0.773 | 0.173 |
-
-**Top predictive features (Permutation Importance, RF):** `backlogs` · `cgpa` · `technical_skill_score` · `soft_skill_score`
+| Training | Offline scripts, run by a developer | In the app, by the user, on their data |
+| Schema | 17 hardcoded placement columns | Whatever the user uploads |
+| Features | 21 formulas written by hand in `feature_engineering.py` | Designed per dataset by the LLM, from a closed vocabulary |
+| Models | Three, fixed, pre-trained and committed | Chosen and weighted per dataset; nothing pre-trained |
+| Tenancy | One organisation | Many, each isolated |
+| Surface | FastAPI service + Streamlit dashboard | Streamlit only |
 
 ---
 
-## ⚡ Part 3 — XGBoost Model
-
-All Part 3 files live in `part3/`.
-
-### Quick Start
+## Quickstart
 
 ```bash
-python part3/xgboost_model.py
-# or
-part3\run_pipeline.bat
-```
-
-XGBoost is trained with CUDA GPU acceleration (falls back to CPU automatically). `scale_pos_weight` handles class imbalance. Hyperparameter tuning uses `RandomizedSearchCV` → `GridSearchCV`.
-
----
-
-## 🔍 Part 4 — Explainability & Fairness
-
-All Part 4 files live in `part4/`.
-
-### Quick Start
-
-```bash
-python download_dataset.py
-python preprocessing.py
-python part3/xgboost_model.py
-part4\run_pipeline.bat
-```
-
-| Technique | Purpose |
-|---|---|
-| SHAP TreeExplainer | Local + global explanations — why THIS student got their score |
-| Platt scaling / Isotonic regression | Calibrate raw XGBoost scores into trustworthy probabilities |
-| Group-wise FNR audit | Compare false negative rates across gender & extracurricular groups |
-| Mitigation report | Proposed fixes if disparity detected |
-
----
-
-## 🚀 Part 6 — REST API (FastAPI)
-
-### Architecture
-
-```
-Streamlit Frontend
-      │ POST /api/v1/predict (JSON)
-      ▼
-FastAPI  ─── Pydantic validation
-      │
-      ▼
-ColumnTransformer (StandardScaler + OneHotEncoder)
-      │
-      ▼
-Classifier (LR / RF / XGBoost — selectable per request)
-      │
-      ▼
-JSON response  +  SQLite prediction log
-```
-
-### Running Locally
-
-```bash
-# Terminal 1 — API
-venv\Scripts\python.exe -m uvicorn api.main:app --reload --port 8000
-
-# Terminal 2 — Dashboard
-venv\Scripts\streamlit run frontend\app.py
-```
-
-### API Endpoints
-
-| Method | Path | Description |
-|---|---|---|
-| `GET` | `/health` | Liveness probe — confirms all 3 models are loaded |
-| `GET` | `/api/v1/models` | List available model identifiers |
-| `POST` | `/api/v1/predict` | Predict placement (body: 15 features + model choice) |
-| `GET` | `/api/v1/drift` | PSI drift report for a model (`?model=xgboost&window=200`) |
-| `GET` | `/logs/summary` | Total prediction counts per model |
-
-Interactive docs: http://localhost:8000/docs
-
-### Selecting a Model
-
-Every prediction request includes a `model` field:
-
-```json
-{
-  "model": "xgboost",       // "logistic_regression" | "random_forest" | "xgboost"
-  "cgpa": 8.2,
-  "ssc_percentage": 75.5,
-  ...
-}
-```
-
-All three models are loaded at startup and served from the same API.
-
----
-
-## 📦 Artifact Packaging
-
-Production artifacts live in `artifacts/production/` and are **committed to git** (allowed by `.gitignore` negation rules). Each model bundle contains:
-
-```
-artifacts/production/<model_name>/
-├── model.joblib          ← trained classifier
-├── preprocessor.joblib   ← fitted ColumnTransformer
-├── manifest.json         ← training metadata (date, features, params)
-└── baseline_metrics.json ← F1, ROC-AUC, mean probability (used by drift checker)
-```
-
-To package a newly trained model:
-
-```bash
-python scripts/package_model.py \
-    --model part3/models/xgboost_best.joblib \
-    --preprocessor part3/models/preprocessor.joblib \
-    --output-dir artifacts/production/xgboost \
-    --overwrite
-```
-
----
-
-## 🔄 CI/CD — GitHub Actions
-
-Every push and pull request to `main` triggers the CI pipeline defined in [`.github/workflows/ci.yml`](.github/workflows/ci.yml):
-
-| Step | Tool | Blocks merge? |
-|---|---|:---:|
-| Lint | `ruff check .` | ✅ Yes |
-| Type check | `pyright` | ⚠️ Advisory |
-| Unit tests | `pytest tests/` | ✅ Yes |
-| Model smoke test | `python scripts/smoke_test_models.py` | ✅ Yes |
-
-The smoke test loads all three production `.joblib` bundles and runs a sample prediction through each. **A broken model artifact cannot be merged.**
-
-### Running Linting & Tests Locally
-
-```bash
-# 1. Install test and dev dependencies
-pip install pytest httpx pytest-asyncio ruff pyright
-
-# 2. Run linter & formatter
-ruff check .
-ruff format . --check
-
-# 3. Run unit tests (no artifacts needed)
-pytest tests/test_schemas.py tests/test_drift.py tests/test_logger.py -v
-
-# 4. Run full integration tests (requires artifacts/production/)
-pytest tests/ -v
-
-# 5. Run model smoke test
-python scripts/smoke_test_models.py
-```
-
----
-
-## 📊 Prediction Logging & Drift Monitoring
-
-### Prediction Logging
-
-Every successful prediction is recorded in `logs/predictions.db` (SQLite, WAL mode, thread-safe).
-
-```bash
-# Check log counts
-curl http://localhost:8000/logs/summary
-# → {"total": 42, "by_model": {"xgboost": 30, "random_forest": 10, "logistic_regression": 2}}
-```
-
-### Drift Detection (PSI)
-
-```bash
-curl "http://localhost:8000/api/v1/drift?model=xgboost&window=200"
-# → {"status": "ok", "psi": 0.042, "mean_shift": 0.018, ...}
-```
-
-| Status | Condition | Action |
-|---|---|---|
-| `ok` | PSI < 0.10, shift < 0.05 | None |
-| `warn` | PSI 0.10–0.20 or shift 0.05–0.10 | Monitor closely |
-| `alert` | PSI > 0.20 or shift > 0.10 | Initiate retraining review |
-| `insufficient_data` | < 20 predictions logged | Accumulate more traffic |
-
----
-
-## ☁️ Cloud Deployment
-
-### Backend API — Render (Free Tier, $0/month)
-
-1. Push this repo to GitHub (artifacts must be committed).
-2. Go to [render.com](https://render.com) → **New → Blueprint**.
-3. Connect your GitHub repo — Render auto-detects `render.yaml`.
-4. The API will be live at `https://student-placement-api.onrender.com`.
-
-> Free tier sleeps after 15 min of inactivity (~30 s cold start). See `docs/DEPLOYMENT.md` for upgrade options.
-
-### Frontend Dashboard — Streamlit Community Cloud (Free Tier, $0/month)
-
-1. Go to [share.streamlit.io](https://share.streamlit.io) → **New app**.
-2. Connect your GitHub repo, set main file to `frontend/app.py`.
-3. Under **Secrets**, add:
-   ```toml
-   BACKEND_URL = "https://student-placement-api.onrender.com/api/v1/predict"
-   ```
-4. Click **Deploy**.
-
-Full deployment guide and retraining policy: [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md)
-
----
-
-## 🔁 Retraining Policy
-
-| Trigger | Threshold |
-|---|---|
-| Drift alert | PSI > 0.20 OR mean shift > 0.10 for 3+ consecutive days |
-| F1 regression | F1 drops below 0.80 on held-out validation set |
-| Data volume | New labeled data > 20 % of original training set |
-| Calendar | Every academic semester (~6 months) |
-
-See `docs/DEPLOYMENT.md` for the full retraining procedure.
-
----
-
-## 🛠️ Local Setup
-
-See **[SETUP.md](SETUP.md)** for detailed step-by-step setup instructions.
-
-**Quick start:**
-
-```bash
-# Clone & set up environment
-git clone https://github.com/alfreddevy2020-kch/StudentPlacementPrediction.git
-cd StudentPlacementPrediction
-python -m venv venv
-venv\Scripts\activate
 pip install -r requirements.txt
+streamlit run app.py
+```
 
-# Download dataset
-python download_dataset.py
+That is the whole setup. **No API key is required** — without one the planner
+uses its rule-based fallback and the product works end to end, just without
+generated reasoning.
 
-# Start the API
-venv\Scripts\python.exe -m uvicorn api.main:app --reload --port 8000
+In the app: create a workspace in the sidebar → **Train** tab → *Use sample
+data* → *Start training*. About twenty seconds later you have a model, and the
+**Predict** tab has built a form for it.
 
-# Start the dashboard (new terminal)
-venv\Scripts\streamlit run frontend\app.py
+### Turning the AI planner on
+
+Get a free key from [Google AI Studio](https://aistudio.google.com/apikey)
+(Gemini) or [xAI](https://console.x.ai/) (Grok), then either:
+
+```bash
+# a .env file at the repo root
+echo 'GEMINI_API_KEY=your-key-here' > .env
+```
+
+or set `GEMINI_API_KEY` / `XAI_API_KEY` as an environment variable, or put it in
+`.streamlit/secrets.toml` for Streamlit Community Cloud. The sidebar shows which
+providers it can see. See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for the full
+list of settings.
+
+---
+
+## How a training run works
+
+Eleven stages. The LLM owns four of them; everything else is ordinary Python.
+
+```
+  ingest ─► profile ─►┌ understand ─► clean ─► engineer ─► select ┐─► train
+                      └──────────── the LLM plans ───────────────┘     │
+                                                                       ▼
+                package ◄─ explain ◄─ choose ◄─ evaluate ◄─────────────┘
+```
+
+| Stage | Who | What happens |
+|---|---|---|
+| ingest | code | Read the file, snake_case the headers, cap the row count |
+| profile | code | Measure every column: dtype, range, gaps, cardinality, examples |
+| **understand** | **LLM** | Assign each column a role; find the target; flag leakage |
+| **clean** | **LLM** | Per-column repair and imputation rules |
+| **engineer** | **LLM** | Derived features, from a fixed operation vocabulary |
+| **select** | **LLM** | Candidate algorithms, hyperparameters, ensemble weights |
+| train | code | Fit each candidate with stratified cross-validation |
+| evaluate | code | Score on a held-out split it never saw |
+| choose | code | Best single model vs. the weighted ensemble; permutation importance |
+| explain | LLM* | Plain-language summary of what was built |
+| package | code | Save one joblib + a manifest recording the whole plan |
+
+\* falls back to a template built from the same numbers.
+
+### The three rules that make this safe
+
+**The LLM emits plans, never code.** Every derived feature is a `{name, op,
+inputs, params}` record drawn from an enumerated vocabulary — `ratio`, `spread`,
+`normalize_max`, `binarize_equals`, and about twenty others. There is no `eval`,
+no expression parser, and no way to name an operation that does not exist. A bad
+generation is a rejected plan, not arbitrary execution.
+
+**The LLM never sees a data row.** It plans against a statistical profile —
+column names, dtypes, ranges, missingness, a handful of example values. One
+tenant's student records never reach a third-party API.
+
+**Every stage can fail without stopping the run.** Each one runs a ladder:
+generate → validate → repair once from the validation error → fall back to a
+rule-based planner that produces a complete, trainable plan on its own. The
+fallback is not a stub; it is what CI runs, and it reaches ROC-AUC 0.8813 on the
+bundled sample. Which stages the LLM actually authored is recorded per stage in
+the model card, so nothing claims to be AI-designed when it was not.
+
+---
+
+## What you get back
+
+- **A model card** — the full plan, verbatim: every column role and why, every
+  cleaning rule and why, every derived feature and its formula, every algorithm
+  tried with its score and cross-validated spread.
+- **Honest scores** — computed once on a held-out split, stored in the bundle.
+  The decision threshold is a *fitted parameter*, chosen on out-of-fold
+  predictions rather than left at 0.5, which matters on an imbalanced intake.
+- **Per-prediction explanations** — for each field, the change in probability
+  caused by this record's value versus a typical one, plus the smallest single
+  change that would flip the outcome.
+- **Drift monitoring** — PSI between the records you are scoring now and the
+  training population, measured against a baseline captured at training time.
+- **A feedback loop** — record what actually happened to past predictions and
+  export them as training data for the next run.
+
+---
+
+## Repository layout
+
+```
+app.py                       the entire UI: workspace, train, predict, history, model card
+placement_ai/
+  config.py                  paths, provider settings, guardrails
+  profiling.py               deterministic dataset profiling
+  plans.py                   the LLM/executor contract — every plan is validated against this
+  llm/                       Gemini + Grok over REST, key resolution, JSON extraction
+  planner/
+    prompts.py               one prompt per stage
+    heuristic.py             the rule-based planner — the floor the product stands on
+    sanitize.py              turning a raw reply into a plan that is true about this dataset
+    planner.py               generate -> validate -> repair -> fall back
+    narrator.py              plain-language write-ups
+  pipeline/
+    dsl.py                   the feature operations; the only place a plan becomes numbers
+    transformers.py          cleaning + feature synthesis as fitted sklearn estimators
+    ensemble.py              weighted soft voting over already-fitted models
+    builder.py               assembling plans into a scikit-learn pipeline
+  training/
+    runner.py                the eleven-stage job
+    evaluation.py            metrics, threshold selection, permutation importance
+  registry/
+    workspace.py             one directory per organisation
+    model_store.py           versioned joblib bundles with checksummed manifests
+    history.py               per-workspace prediction log (SQLite)
+  inference/
+    predictor.py             serving a saved bundle
+    explain.py               attribution, what-if curves, improvement levers
+    drift.py                 PSI against the training baseline
+docs/
+  ARCHITECTURE.md            the design, and the alternatives that were rejected
+  DEPLOYMENT.md              running it locally and in the cloud
+scripts/smoke_test.py        CI gate: trains a real model with no key
+tests/                       248 tests, all running without a provider
+data/raw/                    the bundled synthetic sample
+workspaces/                  tenant data — gitignored, never committed
 ```
 
 ---
 
-## 📋 Tech Stack
+## The bundled sample
 
-| Layer | Technology |
+`data/raw/synthetic_placement_dataset.csv` — 10,000 synthetic student records,
+19 columns, no real people. It exists so a first-time user can reach a trained
+model without hunting for a CSV.
+
+Trained on it with **no LLM at all**, the rule-based planner produces:
+
+| | |
 |---|---|
-| ML Models | scikit-learn (LR, RF), XGBoost |
-| Explainability | SHAP |
-| API | FastAPI + Pydantic v2 + uvicorn |
-| Frontend | Streamlit + Plotly |
-| Prediction Logging | SQLite (WAL mode) |
-| Drift Detection | PSI (Population Stability Index) |
-| CI/CD | GitHub Actions |
-| Linting & Formatting | Ruff |
-| Type checking | pyright |
-| Testing | pytest + httpx |
-| Deployment (API) | Render free tier |
-| Deployment (UI) | Streamlit Community Cloud |
+| Champion | Logistic Regression (beat Random Forest and XGBoost) |
+| ROC-AUC | **0.8813** on 2,000 held-out rows |
+| Decision threshold | 0.403, fitted — not 0.5 |
+| Derived features | 15, built from column shape alone |
+| Training time | ~20 s |
+
+For reference, the previous hand-engineered pipeline scored 0.8780 on the same
+data. The point is not that 0.8813 is better — the difference is noise. The
+point is that a system with *no knowledge of placement data* matched a
+hand-tuned pipeline, which is what makes it plausible on a dataset nobody has
+tuned for.
 
 ---
 
-## 🔒 Data & Privacy
+## Limitations
 
-The following are **never committed** to git:
+Stated plainly, because a system that plans its own pipeline invites more trust
+than it has earned:
 
-- Raw student data (`data/raw/`)
-- Processed datasets (`data/processed/`)
-- Student IDs or PII
-- API tokens or secrets (`.env`, `.streamlit/secrets.toml`)
-- Prediction logs (`logs/predictions.db`, `*.sqlite`, `*.db`)
-- Experimental / unapproved model artifacts
+- **Classification only.** Binary and multiclass. A continuous target is
+  refused with an explanation rather than silently bucketed.
+- **The access code is separation, not authentication.** It keeps tenants out of
+  each other's workspaces in the UI. Anyone with filesystem access can read
+  everything. Putting this in front of real students means putting a real
+  identity provider in front of it first.
+- **Attribution is ablation, not SHAP.** One field at a time, so the numbers
+  rank influence rather than decomposing it exactly, and interactions are
+  missed. The trade buys explanations that work on any pipeline the planner
+  assembles and run inline in the UI.
+- **Free tiers are rate-limited.** A training run makes four planning calls plus
+  one narration call. On a free key, several runs in quick succession will start
+  falling back to the rules — visibly, in the model card.
+- **Protected attributes are not filtered.** If a spreadsheet contains gender or
+  caste, those columns become features like any other. The model card shows
+  exactly what was used; deciding what *should* be used is the institution's
+  call, and it is a real one.
+- **No text or datetime features.** Free-text and timestamp columns are
+  reported and dropped, not vectorised.
 
-Only explicitly reviewed production artifacts in `artifacts/production/` are committed.
+---
+
+## Development
+
+```bash
+pytest tests/ -q                 # 248 tests, no API key needed
+ruff check .                     # run before finishing any change
+python scripts/smoke_test.py     # the full loop end to end, no key
+streamlit run app.py
+```
+
+CI runs ruff → pyright (advisory) → pytest → the smoke test, with
+`LLM_PROVIDER=off` so the rule-based path is what gets verified.
+
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the design decisions and
+the alternatives that were considered and rejected.
