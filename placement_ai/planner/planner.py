@@ -92,6 +92,11 @@ class Planner:
 
         if self.provider is None:
             plan = fallback()
+            # Still report completion. Without this the caller's progress bar
+            # sits at the pre-planning stage through all four planning steps and
+            # then jumps, which reads as a hang on a slow dataset.
+            if progress:
+                progress(stage, "ok", "Planned with the built-in rules")
             return StageOutcome(
                 plan=plan,
                 provenance=StageProvenance(stage=stage, source=StageSource.heuristic),

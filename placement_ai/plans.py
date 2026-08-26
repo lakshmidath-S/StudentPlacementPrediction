@@ -16,7 +16,7 @@ rule and which derived feature the system chose, and why it said it chose it.
 
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -38,12 +38,12 @@ class _Plan(BaseModel):
 # ── Stage 1: schema understanding ───────────────────────────────────────────
 
 
-class TaskType(str, Enum):
+class TaskType(StrEnum):
     binary_classification = "binary_classification"
     multiclass_classification = "multiclass_classification"
 
 
-class ColumnRole(str, Enum):
+class ColumnRole(StrEnum):
     """What a column is *for*, which is not the same as what dtype it holds."""
 
     numeric_feature = "numeric_feature"
@@ -124,7 +124,7 @@ class SchemaPlan(_Plan):
 # ── Stage 2: cleaning ────────────────────────────────────────────────────────
 
 
-class ImputeStrategy(str, Enum):
+class ImputeStrategy(StrEnum):
     median = "median"
     mean = "mean"
     most_frequent = "most_frequent"
@@ -169,7 +169,7 @@ class CleaningPlan(_Plan):
 # ── Stage 3: feature synthesis ───────────────────────────────────────────────
 
 
-class FeatureOp(str, Enum):
+class FeatureOp(StrEnum):
     """The complete vocabulary a generated feature may use.
 
     Every op is a closed-form transform of named columns. There is no
@@ -278,7 +278,7 @@ class FeaturePlan(_Plan):
 # ── Stage 4: model selection & weighting ─────────────────────────────────────
 
 
-class Algorithm(str, Enum):
+class Algorithm(StrEnum):
     logistic_regression = "logistic_regression"
     random_forest = "random_forest"
     extra_trees = "extra_trees"
@@ -287,7 +287,7 @@ class Algorithm(str, Enum):
     xgboost = "xgboost"
 
 
-class Metric(str, Enum):
+class Metric(StrEnum):
     roc_auc = "roc_auc"
     average_precision = "average_precision"
     f1 = "f1"
@@ -295,7 +295,7 @@ class Metric(str, Enum):
     accuracy = "accuracy"
 
 
-class ThresholdStrategy(str, Enum):
+class ThresholdStrategy(StrEnum):
     """How the 0/1 cut-off is chosen once probabilities exist.
 
     `default` keeps 0.5. The others are picked on the validation split, which
@@ -355,7 +355,7 @@ class ModelPlan(_Plan):
 # ── Provenance ───────────────────────────────────────────────────────────────
 
 
-class StageSource(str, Enum):
+class StageSource(StrEnum):
     llm = "llm"
     llm_repaired = "llm_repaired"  # first generation failed validation, retry passed
     heuristic = "heuristic"  # no provider, or the LLM never produced a valid plan

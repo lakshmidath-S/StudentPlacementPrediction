@@ -10,7 +10,7 @@ import json
 import math
 import re
 import unicodedata
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -19,7 +19,7 @@ _SLUG_STRIP = re.compile(r"[^a-z0-9]+")
 
 def utc_now_iso() -> str:
     """Timestamp used in every manifest and history row."""
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def slugify(value: str, fallback: str = "item") -> str:

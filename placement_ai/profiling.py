@@ -236,8 +236,17 @@ def profile_column(series: pd.Series, name: str, n_rows: int) -> ColumnProfile:
         ]
 
     profile.is_numeric_like_text = _coerces_to_numeric(series)
+    # High cardinality alone does not make a column an identifier. A continuous
+    # measurement — a score with decimals, a salary, a duration — is normally
+    # unique per row and is exactly the kind of column a model wants most.
+    # Identifiers are whole numbers or strings, so decimal floats are exempt.
+    could_be_an_id = profile.is_integral or kind not in {"numeric", "boolean"}
     profile.looks_like_identifier = bool(
-        (profile.unique_ratio >= IDENTIFIER_UNIQUE_RATIO and n_rows > 20)
+        (
+            could_be_an_id
+            and profile.unique_ratio >= IDENTIFIER_UNIQUE_RATIO
+            and n_rows > 20
+        )
         or name.endswith(("_id", "_no", "_number"))
         or name in {"id", "index", "sl_no", "serial", "roll", "roll_no", "uid"}
     )

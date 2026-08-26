@@ -70,7 +70,7 @@ class WeightedSoftVoter(BaseEstimator, ClassifierMixin):
         classes = np.asarray(getattr(self, "classes_", members[0][1].classes_))
 
         total: np.ndarray | None = None
-        for (_, estimator), weight in zip(members, weights):
+        for (_, estimator), weight in zip(members, weights, strict=True):
             probabilities = _aligned_proba(estimator, X, classes)
             total = probabilities * weight if total is None else total + probabilities * weight
         assert total is not None

@@ -22,12 +22,6 @@ ENV/
 .idea/
 
 # ==============================
-# Jupyter Notebook
-# ==============================
-
-.ipynb_checkpoints/
-
-# ==============================
 # Environment / Secrets
 # ==============================
 
@@ -35,6 +29,17 @@ ENV/
 .env.*
 !.env.example
 .streamlit/secrets.toml
+
+# ==============================
+# Tenant data — NEVER commit
+# ==============================
+#
+# workspaces/ holds every organisation's uploaded data, trained models and
+# prediction history. Nothing under it belongs in version control: it is other
+# people's records, and a model trained on them is derived from those records.
+# Override the location with PLACEMENT_AI_HOME to keep it off the repo entirely.
+
+workspaces/
 
 # ==============================
 # OS generated files
@@ -54,70 +59,44 @@ Thumbs.db
 htmlcov/
 
 # ==============================
-# Logs & Databases
+# Logs & databases
 # ==============================
 
 *.log
-logs/
-!logs/.gitkeep
 *.db
 *.sqlite
 *.sqlite3
 
 # ==============================
-# Temporary files
+# Serialised models
 # ==============================
-
-*.tmp
-*.temp
-
-# ==============================
-# Machine Learning generated files
-# ==============================
+#
+# No model is committed any more — every model in this system is trained by a
+# user, on their data, and lives in their workspace.
 
 *.pkl
 *.joblib
 *.h5
 *.keras
 
-# Allow production artifacts
-!artifacts/
-!artifacts/production/
-!artifacts/production/**/*.joblib
-!artifacts/production/**/*.json
-
 # ==============================
-# Processed / generated data
+# Data
 # ==============================
+#
+# The bundled sample is synthetic and carries no real student records, so it
+# ships with the repo to give a first-time user something to train on.
 
-# Keep raw dataset out of GitHub if required by its license
-!data/raw/student_placement.csv
+data/*
+!data/raw/
+data/raw/*
 !data/raw/synthetic_placement_dataset.csv
 
-# Generated processed datasets
-data/processed/
-
 # ==============================
-# Generated visualizations & artifacts
+# Scratch
 # ==============================
 
-# Model outputs (generated training runs)
-part2/models/
-part2/model_results/
-
-part3/models/
-part3/model_results/
-
-part4/models/
-part4/explainability_results/
-
-# ==============================
-# Streamlit AI Agent Skills
-# ==============================
-
-.agents/skills/developing-with-streamlit
-.claude/skills/developing-with-streamlit
-
+*.tmp
+*.temp
 prediction.txt
 cognizant-hackathon-playbook (1).md
 SCHEMA_MIGRATION_AUDIT.md

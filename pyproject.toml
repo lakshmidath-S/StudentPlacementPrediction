@@ -1,12 +1,12 @@
 [project]
-name = "student-placement-prediction"
-version = "1.0.0"
-description = "Machine learning system for student placement prediction"
-requires-python = ">=3.9"
+name = "adaptive-placement-intelligence"
+version = "2.0.0"
+description = "LLM-orchestrated AutoML: upload a spreadsheet, get a trained model you own"
+requires-python = ">=3.11"
 
 [tool.ruff]
 line-length = 100
-target-version = "py39"
+target-version = "py311"
 exclude = [
     ".git",
     ".venv",
@@ -14,6 +14,7 @@ exclude = [
     "__pycache__",
     "build",
     "dist",
+    "workspaces",
 ]
 
 [tool.ruff.lint]
@@ -28,33 +29,18 @@ select = [
     "SIM",   # flake8-simplify
 ]
 ignore = [
-    "E501",  # line too long (formatting handles line wrapping)
-    "B008",  # do not perform function calls in argument defaults (FastAPI Query/Depends)
+    "E501",  # line too long (wrapping is a formatting concern)
 ]
 
-[tool.ruff.lint.per-file-ignores]
-# These modules live outside the repo root package and must insert the repo
-# root onto sys.path before they can import feature_engineering, so their
-# imports legitimately cannot all sit at the top of the file.
-"frontend/app.py" = ["E402"]
-"frontend/batch_predictor.py" = ["E402"]
-"part2/hp_sensitivity_analysis.py" = ["E402"]
-"part2/logistic_regression_model.py" = ["E402"]
-"part2/model_comparison.py" = ["E402"]
-"part2/model_summary_report.py" = ["E402"]
-"part2/random_forest_model.py" = ["E402"]
-"part3/predict_sample.py" = ["E402"]
-"part3/xgboost_model.py" = ["E402"]
-"part4/explainability_fairness.py" = ["E402"]
-"part4/shap_analysis.py" = ["E402"]
-"part8/evaluation_suite.py" = ["E402"]
-"scripts/train_models_fast.py" = ["E402"]
-"tests/test_custom_csv_simulation.py" = ["E402"]
-
 [tool.ruff.lint.isort]
-known-first-party = ["api", "feature_engineering"]
+known-first-party = ["placement_ai"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
-asyncio_mode = "auto"
+filterwarnings = [
+    # joblib still assigns to ndarray.shape, which NumPy 2.5 deprecated. It is
+    # third-party and unactionable here, and 200+ copies of it per run bury the
+    # warnings that are actually ours.
+    "ignore:Setting the shape on a NumPy array has been deprecated:DeprecationWarning",
+]

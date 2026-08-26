@@ -393,7 +393,7 @@ def render_train_tab(workspace: Workspace) -> None:
 
     levels = info["levels"]
     columns = st.columns(min(len(levels), 4) or 1)
-    for column, level in zip(columns, levels[:4]):
+    for column, level in zip(columns, levels[:4], strict=False):
         share = level["count"] / max(len(frame), 1) * 100
         column.metric(str(level["value"]), f"{level['count']:,}", f"{share:.1f}% of rows")
     if info["positive_class"]:
@@ -526,7 +526,7 @@ def render_metric_row(bundle: ModelBundle, metrics: dict[str, Any]) -> None:
         ("F1", metrics.get("f1")),
     ]
     columns = st.columns(len(tiles))
-    for column, (label, value) in zip(columns, tiles):
+    for column, (label, value) in zip(columns, tiles, strict=True):
         column.metric(label, f"{value:.3f}" if isinstance(value, (int, float)) else "—")
 
 
@@ -823,7 +823,7 @@ def render_batch_prediction(
                     source="batch",
                     batch_id=batch_id,
                 )
-                for inputs, label, probability in zip(
+                for inputs, label, probability in zip(  # noqa: B905
                     scored[supplied].to_dict("records"),
                     scored["prediction"].tolist(),
                     scored["probability"].tolist(),

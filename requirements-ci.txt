@@ -1,38 +1,29 @@
 # ============================================================
-# requirements-ci.txt
-# Minimal dependencies for GitHub Actions CI.
-# Pinned versions match the serialized production model artifacts.
+# CI dependencies.
+#
+# Deliberately no API key and no LLM provider: CI exercises the rule-based
+# planner, which is the path a fresh clone and any key-less deployment take. If
+# that path ever stops producing a trainable model, the build must go red.
+#
+# Streamlit is included because the app is smoke-tested headlessly through
+# streamlit.testing.AppTest.
 # ============================================================
 
-# Core ML (scikit-learn pinned to match serialized joblib artifacts)
-# numpy must be >=2: shap >= 0.50 requires it, and a `<2.0.0` cap here made
-# this file unsatisfiable (pip ResolutionImpossible). Verified that the
-# committed bundles load and predict identically under numpy 2.x.
 numpy>=2.0.0
-pandas>=2.0.0
-scikit-learn==1.6.1
+pandas>=2.2.0
+scikit-learn>=1.5.0
+scipy>=1.11.0
 joblib>=1.3.0
 xgboost>=2.0.0
 
-# >=0.50.0 required: xgboost >= 2.0 serializes base_score as a vector string
-# that shap < 0.50 cannot parse (ValueError: could not convert string to float)
-shap>=0.50.0
-
-# Explainability & frontend rendering (shap_explainer.py + tests)
+streamlit>=1.44.0
 plotly>=5.18.0
+openpyxl>=3.1.0
 
-# API layer
-fastapi>=0.100.0
-uvicorn>=0.24.0
-pydantic>=2.0.0
+pydantic>=2.6.0
+requests>=2.31.0
+python-dotenv>=1.0.0
 
-# Test client
-httpx>=0.25.0
-
-# Testing
-pytest>=7.4.0
-pytest-asyncio>=0.23.0
-
-# Linting & type checking
+pytest>=8.0.0
 ruff>=0.3.0
 pyright>=1.1.350

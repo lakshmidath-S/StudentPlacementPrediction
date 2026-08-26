@@ -1,13 +1,15 @@
 {
   "include": [
-    "api",
+    "placement_ai",
     "scripts",
-    "tests"
+    "tests",
+    "app.py"
   ],
   "exclude": [
     "**/__pycache__",
     "venv",
-    ".venv"
+    ".venv",
+    "workspaces"
   ],
   "pythonVersion": "3.11",
   "typeCheckingMode": "basic",

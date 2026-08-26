@@ -103,7 +103,7 @@ def apply_spec(spec: FeatureSpec, df: pd.DataFrame, state: dict[str, Any]) -> pd
     if op is FeatureOp.weighted_sum:
         weights = [float(w) for w in params.get("weights", [])]
         frame = _frame(df, spec.inputs)
-        total = sum(frame[name] * weight for name, weight in zip(spec.inputs, weights))
+        total = sum(frame[name] * weight for name, weight in zip(spec.inputs, weights, strict=True))
         return _finite(total, index)
 
     if op is FeatureOp.product:
@@ -241,6 +241,6 @@ def describe_spec(spec: FeatureSpec) -> str:
         return f"1 when {inputs[0]} was blank"
     if op is FeatureOp.weighted_sum:
         weights = spec.params.get("weights", [])
-        terms = [f"{w}x{name}" for name, w in zip(inputs, weights)]
+        terms = [f"{w}x{name}" for name, w in zip(inputs, weights, strict=False)]
         return " + ".join(terms)
     return f"{op.value}({', '.join(inputs)})"

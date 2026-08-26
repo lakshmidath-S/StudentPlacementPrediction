@@ -1,40 +1,39 @@
-# Core Data Analysis & Machine Learning
-# numpy must be >=2: shap >= 0.50 (below) requires it, and a `<2.0.0` cap here
-# made this file unsatisfiable (pip ResolutionImpossible).
+# ============================================================
+# Adaptive Placement Intelligence — runtime dependencies
+#
+# There is no version pin against a serialised artifact any more. Models are
+# trained by the user in whatever environment the app is running, and each
+# bundle records the library versions that built it, so a mismatch is reported
+# at load time instead of being prevented by a pin here.
+# ============================================================
+
+# Core data & modelling
 numpy>=2.0.0
-pandas>=2.0.0
-scikit-learn==1.9.0
+pandas>=2.2.0
+scikit-learn>=1.5.0
 scipy>=1.11.0
 joblib>=1.3.0
-matplotlib>=3.7.0
-seaborn>=0.12.0
 
-# Part 3 - XGBoost Model
+# Optional accelerator. The planner falls back to scikit-learn's histogram
+# boosting when it is absent, so the app runs without it.
 xgboost>=2.0.0
 
-# Role 6 - Backend API
-fastapi>=0.100.0
-uvicorn>=0.24.0
-pydantic>=2.0.0
-httpx>=0.25.0
-
-# Role 3 - Streamlit Frontend Dashboard
-streamlit>=1.30.0
-requests>=2.31.0
+# UI
+streamlit>=1.44.0
 plotly>=5.18.0
 
-# Role 4 - Explainability & Fairness
-# >=0.50.0 required: xgboost >= 2.0 serializes base_score as a vector string
-# that shap < 0.50 cannot parse (ValueError: could not convert string to float)
-shap>=0.50.0
+# Reading uploaded spreadsheets
+openpyxl>=3.1.0
 
-# Class Imbalance Handling (used by preprocessing.py)
-imbalanced-learn>=0.11.0
+# Plan validation — the contract between the LLM and the executor
+pydantic>=2.6.0
 
-# Environment Variable Management
+# LLM providers are called over plain REST; no vendor SDK is required.
+requests>=2.31.0
+
+# Loads GEMINI_API_KEY / XAI_API_KEY from a .env file during local development
 python-dotenv>=1.0.0
 
-# Testing & Dev
-pytest>=7.4.0
-pytest-asyncio>=0.23.0
+# Testing & linting
+pytest>=8.0.0
 ruff>=0.3.0

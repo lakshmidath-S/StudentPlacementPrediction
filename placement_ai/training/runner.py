@@ -178,7 +178,11 @@ class TrainingRunner:
     # ── progress plumbing ────────────────────────────────────────────────
     def _emit(self, stage: str, status: str, detail: str = "") -> None:
         if status in {"ok", "fallback"}:
-            self._stage_index = STAGES.index(stage) + 1
+            # Monotonic: stages do not complete in strict list order. The planner
+            # finishes "select" before the runner finishes its own "engineer"
+            # pass over the proposed features, and a progress bar that jumps
+            # backwards reads as a failure.
+            self._stage_index = max(self._stage_index, STAGES.index(stage) + 1)
         if self._progress:
             self._progress(
                 TrainingProgress(
@@ -227,20 +231,19 @@ class TrainingRunner:
         self._emit("profile", "start", "Measuring every column")
         profile = profile_dataframe(frame)
         target_column = self._resolve_target(profile, target_column, frame)
-        target_info = classify_target_labels(frame[target_column])
+
+        # Judge the target on its labelled rows only — a mostly-blank column
+        # would otherwise look like it has a single usable class. The guards run
+        # before planning so an untrainable upload fails in a second with an
+        # accurate message, rather than after four LLM calls with a vague one.
+        labelled = frame[frame[target_column].notna()]
+        target_info = classify_target_labels(labelled[target_column])
         self._emit(
             "profile",
             "ok",
             f"Target {target_column!r} with {target_info['n_classes']} distinct outcomes",
         )
-
-        if target_info["task_type"] == "regression":
-            raise TrainingError(
-                f"Column {target_column!r} holds {target_info['n_classes']} distinct "
-                "continuous values, which is a number to estimate rather than an "
-                "outcome to classify. This build predicts categories — pick a column "
-                "with a small set of possible answers, such as Placed / Not placed."
-            )
+        self._guard_target(labelled[target_column], target_column, target_info)
 
         # ── 3-6. planning ────────────────────────────────────────────────
         levels, imbalance_pp = class_balance(frame[target_column])
@@ -271,7 +274,9 @@ class TrainingRunner:
         if dropped_rows:
             warnings.append(f"Removed {dropped_rows:,} duplicate or unlabelled row(s).")
 
-        self._guard_class_counts(frame[target_column], target_column)
+        # Re-checked because de-duplication can push a thin class below the
+        # minimum even though the raw upload cleared it.
+        self._guard_target(frame[target_column], target_column, target_info)
 
         # ── label encoding ───────────────────────────────────────────────
         label_encoder = LabelEncoder().fit(frame[target_column].astype(str))
@@ -561,13 +566,29 @@ class TrainingRunner:
         )
 
     @staticmethod
-    def _guard_class_counts(target: pd.Series, name: str) -> None:
+    def _guard_target(target: pd.Series, name: str, target_info: dict[str, Any]) -> None:
+        """Refuse an untrainable target, in the order that gives the best message.
+
+        A constant column and a continuous one both have "not two usable
+        classes" as their problem, but they need completely different advice, so
+        the constant case is caught before the regression check rather than
+        being described as 1 distinct continuous value.
+        """
         counts = target.astype(str).value_counts()
         if len(counts) < 2:
             raise TrainingError(
                 f"Every row has the same value in {name!r}. A model needs at least two "
                 "different outcomes to learn the difference between them."
             )
+
+        if target_info.get("task_type") == "regression":
+            raise TrainingError(
+                f"Column {name!r} holds {target_info['n_classes']:,} distinct values, "
+                "which is a quantity to estimate rather than an outcome to classify. "
+                "This build predicts categories — pick a column with a small set of "
+                "repeated answers, such as Placed / Not placed."
+            )
+
         thin = counts[counts < MIN_ROWS_PER_CLASS]
         if len(thin):
             listed = ", ".join(f"{value} ({count})" for value, count in thin.items())
