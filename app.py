@@ -39,7 +39,12 @@ from placement_ai.inference.explain import (
     what_if_curve,
 )
 from placement_ai.inference.predictor import WorkspacePredictor
-from placement_ai.llm.registry import get_provider, provider_status
+from placement_ai.llm.registry import (
+    dotenv_status,
+    get_provider,
+    provider_key_names,
+    provider_status,
+)
 from placement_ai.planner.narrator import provenance_summary, write_prediction_advice
 from placement_ai.plans import TrainingPlan
 from placement_ai.profiling import canonicalize_columns, classify_target_labels, profile_dataframe
@@ -276,8 +281,18 @@ def _bundle_caption(bundle: ModelBundle) -> str:
     return f"{stamp} · {bundle.label}" + (f" · {score:.3f}" if score is not None else "")
 
 
+PROVIDER_LABELS = {"gemini": "Gemini", "grok": "Grok (xAI)", "openrouter": "OpenRouter"}
+
+
 def render_provider_panel() -> None:
     st.markdown("##### :material/smart_toy: AI planner")
+
+    # A .env that cannot be read is the one failure that looks identical to
+    # having no key at all, so it is reported before anything else.
+    problem = dotenv_status()
+    if problem:
+        st.error(problem, icon=":material/report:")
+
     status = provider_status()
     provider = get_provider()
 
@@ -291,17 +306,22 @@ def render_provider_panel() -> None:
         st.info(f"{provider.name} · {provider.model}", icon=":material/bolt:")
         st.caption("The planner reads your columns and designs the pipeline.")
 
-    with st.expander("Configure a key"):
+    with st.expander("Providers"):
         st.caption(
-            "Set one of these as an environment variable, in a `.env` file at the "
-            "repo root, or in `.streamlit/secrets.toml`, then restart the app."
+            "Set a key as an environment variable, in a `.env` file at the repo "
+            "root, or in `.streamlit/secrets.toml`, then restart the app. "
+            "`LLM_PROVIDER` picks between them; `off` forces the rule-based planner."
         )
-        for name, key in (("Gemini", "GEMINI_API_KEY"), ("Grok", "XAI_API_KEY")):
-            found = status.get(name.lower(), False)
-            st.markdown(
-                f"{':material/check_circle:' if found else ':material/circle:'} "
-                f"**{name}** — `{key}`"
-            )
+        for kind, key_names in provider_key_names().items():
+            found = status.get(kind, False)
+            icon = ":material/check_circle:" if found else ":material/circle:"
+            names = " or ".join(f"`{name}`" for name in key_names)
+            st.markdown(f"{icon} **{PROVIDER_LABELS.get(kind, kind)}** — {names}")
+        st.caption(
+            "A key being present does not mean it works — an unfunded account or a "
+            "retired model still falls back. The model card records what actually "
+            "planned each run."
+        )
 
 
 # =============================================================================

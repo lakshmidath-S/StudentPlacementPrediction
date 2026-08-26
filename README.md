@@ -67,17 +67,21 @@ data* → *Start training*. About twenty seconds later you have a model, and the
 ### Turning the AI planner on
 
 Get a free key from [Google AI Studio](https://aistudio.google.com/apikey)
-(Gemini) or [xAI](https://console.x.ai/) (Grok), then either:
+(Gemini), [OpenRouter](https://openrouter.ai/keys) (a gateway to several hundred
+models, some free), or [xAI](https://console.x.ai/) (Grok), then either:
 
 ```bash
 # a .env file at the repo root
 echo 'GEMINI_API_KEY=your-key-here' > .env
 ```
 
-or set `GEMINI_API_KEY` / `XAI_API_KEY` as an environment variable, or put it in
-`.streamlit/secrets.toml` for Streamlit Community Cloud. The sidebar shows which
-providers it can see. See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for the full
-list of settings.
+or set `GEMINI_API_KEY` / `OPENROUTER_API_KEY` / `XAI_API_KEY` as an environment
+variable, or put it in `.streamlit/secrets.toml` for Streamlit Community Cloud.
+The sidebar shows which providers it can see.
+
+Reading `.env` needs `python-dotenv`. It is in `requirements.txt`, and if it is
+missing while a `.env` exists the sidebar says so rather than silently ignoring
+the file. See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for the full settings list.
 
 ---
 
@@ -155,7 +159,7 @@ placement_ai/
   config.py                  paths, provider settings, guardrails
   profiling.py               deterministic dataset profiling
   plans.py                   the LLM/executor contract — every plan is validated against this
-  llm/                       Gemini + Grok over REST, key resolution, JSON extraction
+  llm/                       Gemini, Grok and OpenRouter over REST; retries, key resolution
   planner/
     prompts.py               one prompt per stage
     heuristic.py             the rule-based planner — the floor the product stands on
@@ -228,9 +232,11 @@ than it has earned:
   rank influence rather than decomposing it exactly, and interactions are
   missed. The trade buys explanations that work on any pipeline the planner
   assembles and run inline in the UI.
-- **Free tiers are rate-limited.** A training run makes four planning calls plus
-  one narration call. On a free key, several runs in quick succession will start
-  falling back to the rules — visibly, in the model card.
+- **Free tiers are rate-limited and their models churn.** A training run makes
+  four planning calls plus one narration call. Transient 429/503 responses are
+  retried with backoff; past that the stage falls back to the rules, visibly, in
+  the model card. Model IDs also get retired — both providers' errors name the
+  setting to change.
 - **Protected attributes are not filtered.** If a spreadsheet contains gender or
   caste, those columns become features like any other. The model card shows
   exactly what was used; deciding what *should* be used is the institution's

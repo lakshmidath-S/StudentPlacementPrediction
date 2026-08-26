@@ -20,6 +20,35 @@ RANDOM_SEED = 7
 N_ROWS = 320
 
 
+PROVIDER_KEY_VARS = (
+    "GEMINI_API_KEY",
+    "XAI_API_KEY",
+    "OPENROUTER_API_KEY",
+    "OPEN_ROUTER_API_KEY",
+    "LLM_PROVIDER",
+)
+
+
+@pytest.fixture(autouse=True)
+def _no_ambient_credentials(monkeypatch):
+    """Make the suite hermetic with respect to API keys.
+
+    Without this, a developer with a working .env gets different results from
+    CI: tests asserting "no provider is configured" pass on the build machine
+    and fail on the laptop that actually has keys. Worse, a test could make a
+    real billed call by accident.
+
+    Both the environment and the .env loader are neutralised. A test that wants
+    a key sets one itself with monkeypatch.setenv.
+    """
+    for name in PROVIDER_KEY_VARS:
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr("placement_ai.llm.registry._dotenv_problem", lambda: None)
+    monkeypatch.setattr(
+        "placement_ai.llm.registry._from_streamlit_secrets", lambda name: None
+    )
+
+
 @pytest.fixture(scope="session")
 def rng() -> np.random.Generator:
     return np.random.default_rng(RANDOM_SEED)

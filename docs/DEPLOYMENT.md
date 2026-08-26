@@ -26,10 +26,13 @@ Everything is an environment variable. All are optional.
 | Variable | Default | What it does |
 |---|---|---|
 | `GEMINI_API_KEY` | — | Enables the Gemini planner. Free key from [AI Studio](https://aistudio.google.com/apikey). |
-| `XAI_API_KEY` | — | Enables the Grok planner. Key from [console.x.ai](https://console.x.ai/). |
-| `LLM_PROVIDER` | `auto` | `auto`, `gemini`, `grok`, or `off`. `off` forces the rule-based planner even when a key is present. |
-| `GEMINI_MODEL` | `gemini-2.0-flash` | Which Gemini model to call. |
+| `XAI_API_KEY` | — | Enables the Grok planner. Key from [console.x.ai](https://console.x.ai/). The team must have credits; a keyed but unfunded account returns 403. |
+| `OPENROUTER_API_KEY` | — | Enables the OpenRouter planner — a gateway to several hundred models, some free. `OPEN_ROUTER_API_KEY` is accepted too. |
+| `LLM_PROVIDER` | `auto` | `auto`, `gemini`, `grok`, `openrouter`, or `off`. `off` forces the rule-based planner even when a key is present. |
+| `GEMINI_MODEL` | `gemini-3.6-flash` | Which Gemini model to call. Google retires versions on a schedule; a 404 names the replacement. |
 | `GROK_MODEL` | `grok-3-mini` | Which Grok model to call. |
+| `OPENROUTER_MODEL` | `minimax/minimax-m3:free` | Which OpenRouter model to call. Free IDs churn — see [openrouter.ai/models?max_price=0](https://openrouter.ai/models?max_price=0). |
+| `LLM_NARRATION_TOKENS` | `8192` | Output budget for the plain-language summary. Reasoning models bill their thinking against it, so a small budget truncates the JSON. |
 | `LLM_TIMEOUT_SECONDS` | `90` | Per-request timeout. A stage that times out falls back to the rules. |
 | `LLM_MAX_ATTEMPTS` | `2` | Generation attempts per stage. `2` means one repair pass. |
 | `PLACEMENT_AI_HOME` | `./workspaces` | Where tenant data lives. **Point this at a persistent volume in any cloud deployment.** |
@@ -42,6 +45,10 @@ Everything is an environment variable. All are optional.
 In order: environment variable → `.env` at the repo root → `st.secrets`. The
 last one exists because Streamlit Community Cloud has no way to set environment
 variables.
+
+Reading `.env` requires `python-dotenv`. It ships in `requirements.txt`; if it
+is missing while a `.env` exists, the sidebar says so explicitly rather than
+behaving as though no key were configured.
 
 ```bash
 # local development
@@ -163,8 +170,26 @@ The gaps that matter, in order:
 ## Troubleshooting
 
 **The sidebar says "Running on built-in rules" but I set a key.**
-Streamlit reads `.env` and `st.secrets` at process start. Restart the app. Check
-the variable name — `GEMINI_API_KEY`, not `GOOGLE_API_KEY`.
+Streamlit reads `.env` and `st.secrets` at process start, so restart the app.
+Check the variable name — `GEMINI_API_KEY`, not `GOOGLE_API_KEY`. If the sidebar
+shows a red banner about `python-dotenv`, install it: without it a `.env` file
+is invisible.
+
+**A stage reports HTTP 403 from Grok.**
+The xAI team has no credits or licence. Add them at
+[console.x.ai](https://console.x.ai/), or set `LLM_PROVIDER` to a provider that
+does work. A permanent status like 403 is not retried — retrying would only
+delay the fallback.
+
+**A stage reports HTTP 404 for the model.**
+That model version was retired. The error names the setting to change
+(`GEMINI_MODEL` or `OPENROUTER_MODEL`). Free OpenRouter model IDs turn over
+especially fast.
+
+**Gemini "hit its output limit before finishing the JSON".**
+Reasoning models count their thinking against `maxOutputTokens`, so a budget
+that looks generous can leave nothing for the answer. Raise
+`LLM_NARRATION_TOKENS`, or use a lighter model.
 
 **Training says a stage "fell back to built-in rules".**
 Expected and safe. Open the model card → *The plan* → *Stage-by-stage

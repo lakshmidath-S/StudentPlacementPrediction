@@ -14,10 +14,9 @@ from __future__ import annotations
 import time
 from typing import Any
 
-import requests
-
 from placement_ai.config import GEMINI_ENDPOINT
 from placement_ai.llm.base import LLMError, LLMProvider, LLMResult, extract_json_object
+from placement_ai.llm.http import post_with_retry
 
 
 class GeminiProvider(LLMProvider):
@@ -48,23 +47,25 @@ class GeminiProvider(LLMProvider):
         }
 
         started = time.perf_counter()
-        try:
-            response = requests.post(
-                url,
-                params={"key": self.api_key},
-                json=payload,
-                timeout=self.timeout,
-                headers={"Content-Type": "application/json"},
-            )
-        except requests.RequestException as exc:
-            raise LLMError(f"Gemini request failed: {type(exc).__name__}: {exc}") from exc
+        response = post_with_retry(
+            url,
+            provider="Gemini",
+            params={"key": self.api_key},
+            json=payload,
+            timeout=self.timeout,
+            headers={"Content-Type": "application/json"},
+        )
         latency_ms = (time.perf_counter() - started) * 1000
 
         if response.status_code != 200:
-            raise LLMError(
-                f"Gemini returned HTTP {response.status_code}: "
-                f"{response.text.strip()[:300]}"
-            )
+            detail = response.text.strip()[:400]
+            if response.status_code == 404:
+                raise LLMError(
+                    f"Gemini does not recognise the model {self.model!r}. Google "
+                    "retires model versions on a schedule — set GEMINI_MODEL to a "
+                    f"current one. Their reply: {detail}"
+                )
+            raise LLMError(f"Gemini returned HTTP {response.status_code}: {detail}")
 
         try:
             body = response.json()
@@ -107,10 +108,21 @@ def _first_candidate_text(body: dict[str, Any]) -> str:
         for part in parts
         if isinstance(part, dict) and "text" in part and not part.get("thought")
     ]
+    reason = candidate.get("finishReason", "")
     if not chunks:
-        reason = candidate.get("finishReason", "unknown")
         raise LLMError(
-            f"Gemini produced no text (finishReason={reason}). "
-            "MAX_TOKENS here usually means the plan needs a larger output budget."
+            f"Gemini produced no text (finishReason={reason or 'unknown'}). "
+            "MAX_TOKENS here means thinking consumed the whole output budget."
+        )
+    if reason == "MAX_TOKENS":
+        # The text is real but cut off mid-object, so the JSON will not parse.
+        # Saying "no JSON object found" would send someone hunting the wrong bug;
+        # on Gemini 3.x, reasoning tokens count against maxOutputTokens, so a
+        # budget that looks generous can leave nothing for the answer.
+        thoughts = (body.get("usageMetadata") or {}).get("thoughtsTokenCount")
+        raise LLMError(
+            "Gemini hit its output limit before finishing the JSON"
+            + (f" (thinking used {thoughts} tokens)" if thoughts else "")
+            + ". Raise max_output_tokens for this stage."
         )
     return "".join(chunks)

@@ -130,10 +130,11 @@ def test_streamlit_secrets_are_consulted_when_the_env_is_empty(monkeypatch):
 
 
 class _Response:
-    def __init__(self, status_code, payload=None, text=""):
+    def __init__(self, status_code, payload=None, text="", headers=None):
         self.status_code = status_code
         self._payload = payload
         self.text = text or json.dumps(payload or {})
+        self.headers = headers or {}
 
     def json(self):
         if self._payload is None:
@@ -166,8 +167,32 @@ def test_gemini_ignores_reasoning_parts():
 
 def test_gemini_reports_an_http_error():
     with (
-        patch("requests.post", return_value=_Response(429, text="rate limited")),
-        pytest.raises(LLMError, match="429"),
+        patch("requests.post", return_value=_Response(400, text="bad request")),
+        pytest.raises(LLMError, match="400"),
+    ):
+        GeminiProvider("k", "m", 30).complete_json("s", "u")
+
+
+def test_a_retired_gemini_model_names_the_setting_to_change():
+    with (
+        patch("requests.post", return_value=_Response(404, text="model not found")),
+        pytest.raises(LLMError, match="GEMINI_MODEL"),
+    ):
+        GeminiProvider("k", "gemini-1.0-ancient", 30).complete_json("s", "u")
+
+
+def test_gemini_reports_truncation_rather_than_bad_json():
+    """A reply cut off mid-object is not "no JSON found" — say which it is."""
+    body = {
+        "candidates": [
+            {"content": {"parts": [{"text": '{"headline": "half a sen'}]},
+             "finishReason": "MAX_TOKENS"}
+        ],
+        "usageMetadata": {"thoughtsTokenCount": 1900},
+    }
+    with (
+        patch("requests.post", return_value=_Response(200, body)),
+        pytest.raises(LLMError, match="output limit"),
     ):
         GeminiProvider("k", "m", 30).complete_json("s", "u")
 

@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from placement_ai.config import LLM_NARRATION_TOKENS
 from placement_ai.llm.base import LLMProvider
 from placement_ai.plans import StageSource, TrainingPlan
 
@@ -38,12 +39,28 @@ unplaced one".
 - Reply with a single JSON object and nothing else."""
 
 
+def _round(value: Any, places: int = 4) -> Any:
+    """Trim a float to something a person would read aloud."""
+    return round(value, places) if isinstance(value, float) else value
+
+
+def _rounded(values: dict[str, Any], places: int = 4) -> dict[str, Any]:
+    """The numeric entries of a metrics dict, rounded for quoting."""
+    return {
+        key: _round(value, places)
+        for key, value in values.items()
+        if isinstance(value, (int, float)) and not isinstance(value, bool)
+    }
+
+
 def _call(provider: LLMProvider | None, prompt: str, fallback: dict[str, Any]) -> dict[str, Any]:
     """One narration attempt; the template stands in on any failure."""
     if provider is None:
         return {**fallback, "source": "template"}
     try:
-        result = provider.complete_json(NARRATOR_SYSTEM, prompt, max_output_tokens=2048, temperature=0.4)
+        result = provider.complete_json(
+            NARRATOR_SYSTEM, prompt, max_output_tokens=LLM_NARRATION_TOKENS, temperature=0.4
+        )
     except Exception as exc:
         return {**fallback, "source": "template", "error": f"{type(exc).__name__}: {exc}"}
 
@@ -69,13 +86,18 @@ def write_training_report(
     headline_score = metrics.get(metric)
     fallback = _training_template(champion, metrics, importance, metric, dataset_summary, plan)
 
+    # Round before the numbers reach the prompt. The model quotes what it is
+    # given, and a raw float lands in user-facing copy as "a recall score of
+    # 0.7740863787375415" — accurate, and unreadable.
+    scores = _rounded(metrics)
+
     prompt = f"""Summarise this completed training run.
 
 WHAT WAS TRAINED
 - winning model: {champion}
-- headline metric: {metric} = {headline_score}
-- decision threshold: {metrics.get("threshold")}
-- all scores: {json.dumps({k: v for k, v in metrics.items() if isinstance(v, (int, float))}, ensure_ascii=False)}
+- headline metric: {metric} = {_round(headline_score)}
+- decision threshold: {_round(metrics.get("threshold"))}
+- all scores: {json.dumps(scores, ensure_ascii=False)}
 - confusion matrix: {json.dumps(metrics.get("confusion_matrix", {}), ensure_ascii=False)}
 
 THE DATA
@@ -187,7 +209,7 @@ PREDICTION
 WHAT MOVED THIS PREDICTION
 Each entry gives a field, this person's value, and the change in probability \
 caused by that value compared with a typical value. Positive helps, negative hurts.
-{json.dumps(drivers, ensure_ascii=False)}
+{json.dumps([{**d, 'delta': _round(d.get('delta')), 'value': _round(d.get('value'))} for d in drivers], ensure_ascii=False, default=str)}
 
 THEIR FULL RECORD
 {json.dumps(inputs, ensure_ascii=False, default=str)}

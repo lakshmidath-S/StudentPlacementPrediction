@@ -25,30 +25,63 @@ from placement_ai.config import (
     GROK_MODEL,
     LLM_PROVIDER,
     LLM_TIMEOUT_SECONDS,
+    OPENROUTER_API_KEY_ALIASES,
+    OPENROUTER_MODEL,
     REPO_ROOT,
 )
 from placement_ai.llm.base import LLMProvider
 from placement_ai.llm.gemini import GeminiProvider
 from placement_ai.llm.grok import GrokProvider
+from placement_ai.llm.openrouter import OpenRouterProvider
 
-PROVIDER_CLASSES: dict[str, tuple[type[LLMProvider], str, str]] = {
-    "gemini": (GeminiProvider, GEMINI_API_KEY_ENV, GEMINI_MODEL),
-    "grok": (GrokProvider, GROK_API_KEY_ENV, GROK_MODEL),
+# name -> (class, accepted key env names, default model). Order is the
+# preference order "auto" walks: direct vendor APIs first, then the gateway.
+PROVIDER_CLASSES: dict[str, tuple[type[LLMProvider], tuple[str, ...], str]] = {
+    "gemini": (GeminiProvider, (GEMINI_API_KEY_ENV,), GEMINI_MODEL),
+    "grok": (GrokProvider, (GROK_API_KEY_ENV,), GROK_MODEL),
+    "openrouter": (OpenRouterProvider, OPENROUTER_API_KEY_ALIASES, OPENROUTER_MODEL),
 }
 
+_OFF_VALUES = {"off", "none", "offline", "heuristic", "disabled"}
 
-@lru_cache(maxsize=1)
-def _load_dotenv_once() -> None:
-    """Fold .env into os.environ if python-dotenv is installed.
 
-    Optional on purpose — a missing dotenv package must not stop the app, it
-    just means only real environment variables are visible.
+def _detect_dotenv_problem() -> str | None:
+    """Fold .env into os.environ, returning a description of any problem.
+
+    python-dotenv is an optional dependency, but treating a missing one as
+    silence was a real trap: a user with a correctly written .env saw only
+    "running on built-in rules" and no reason. If the file exists and cannot be
+    read, that is now something the UI can say out loud.
+
+    Kept separate from the cached wrapper below so tests can exercise it
+    directly without reaching into an lru_cache.
     """
+    env_path = REPO_ROOT / ".env"
     try:
         from dotenv import load_dotenv
     except ImportError:
-        return
-    load_dotenv(REPO_ROOT / ".env", override=False)
+        if env_path.exists():
+            return (
+                "A .env file is present but python-dotenv is not installed, so it "
+                "cannot be read. Run `pip install python-dotenv` (or `pip install "
+                "-r requirements.txt`) and restart."
+            )
+        return None
+
+    if env_path.exists():
+        load_dotenv(env_path, override=False)
+    return None
+
+
+@lru_cache(maxsize=1)
+def _dotenv_problem() -> str | None:
+    """Cached so .env is read once per process, not once per secret lookup."""
+    return _detect_dotenv_problem()
+
+
+def dotenv_status() -> str | None:
+    """A message to surface when a .env exists but could not be loaded."""
+    return _dotenv_problem()
 
 
 def _from_streamlit_secrets(name: str) -> str | None:
@@ -68,14 +101,22 @@ def _from_streamlit_secrets(name: str) -> str | None:
     return str(value) if value else None
 
 
-def resolve_secret(name: str) -> str:
-    """Look up one secret across env, .env and Streamlit secrets."""
-    _load_dotenv_once()
-    value = os.getenv(name)
-    if value and value.strip():
-        return value.strip()
-    from_secrets = _from_streamlit_secrets(name)
-    return from_secrets.strip() if from_secrets else ""
+def resolve_secret(*names: str) -> str:
+    """Look up a secret across env, .env and Streamlit secrets.
+
+    Several names may be given as accepted spellings of the same secret; the
+    first that resolves wins.
+    """
+    _dotenv_problem()
+    for name in names:
+        value = os.getenv(name)
+        if value and value.strip():
+            return value.strip()
+    for name in names:
+        from_secrets = _from_streamlit_secrets(name)
+        if from_secrets and from_secrets.strip():
+            return from_secrets.strip()
+    return ""
 
 
 def build_provider(kind: str) -> LLMProvider | None:
@@ -83,8 +124,8 @@ def build_provider(kind: str) -> LLMProvider | None:
     entry = PROVIDER_CLASSES.get(kind)
     if entry is None:
         return None
-    provider_cls, key_env, model = entry
-    api_key = resolve_secret(key_env)
+    provider_cls, key_names, model = entry
+    api_key = resolve_secret(*key_names)
     if not api_key:
         return None
     return provider_cls(api_key=api_key, model=model, timeout=LLM_TIMEOUT_SECONDS)
@@ -99,7 +140,7 @@ def get_provider(preferred: str | None = None) -> LLMProvider | None:
     """
     choice = (preferred or LLM_PROVIDER or "auto").strip().lower()
 
-    if choice in {"off", "none", "offline", "heuristic", "disabled"}:
+    if choice in _OFF_VALUES:
         return None
     if choice in PROVIDER_CLASSES:
         return build_provider(choice)
@@ -113,4 +154,12 @@ def get_provider(preferred: str | None = None) -> LLMProvider | None:
 
 def provider_status() -> dict[str, bool]:
     """Which providers currently hold a usable key — for the settings panel."""
-    return {kind: bool(resolve_secret(key_env)) for kind, (_, key_env, _) in PROVIDER_CLASSES.items()}
+    return {
+        kind: bool(resolve_secret(*key_names))
+        for kind, (_, key_names, _) in PROVIDER_CLASSES.items()
+    }
+
+
+def provider_key_names() -> dict[str, tuple[str, ...]]:
+    """The env var name(s) each provider accepts, for the settings panel."""
+    return {kind: key_names for kind, (_, key_names, _) in PROVIDER_CLASSES.items()}
