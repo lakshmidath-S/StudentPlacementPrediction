@@ -213,7 +213,7 @@ wins. On the bundled sample it usually does not.
 
 ```
 workspaces/<org-slug>-<random>/
-  workspace.json     name, description, SHA-256 of the access code
+  workspace.json     name, description, timestamps
   models/<version>/  pipeline.joblib + manifest.json
   history.db         this workspace's predictions
   datasets/          uploaded snapshots
@@ -224,10 +224,12 @@ two people creating a workspace at the same moment cannot corrupt a shared
 registry — a real risk in Streamlit, where every browser session runs the same
 script.
 
-The access code is separation, not authentication, and the code says so. It
-keeps tenants out of each other's workspaces in the UI; it does not protect
-anything from someone with filesystem access. Real deployment needs a real
-identity provider in front.
+A workspace is separation, not authentication, and there is no login in front
+of one — a user picks a workspace and opens it. The access code this once had
+was never authentication either: it did not protect anything from someone with
+filesystem access, and it cost an ordinary user a code to lose. Real deployment
+needs a real identity provider in front, and that is what should decide who may
+open which workspace.
 
 ---
 

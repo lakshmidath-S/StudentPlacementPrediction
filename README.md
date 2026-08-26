@@ -224,9 +224,9 @@ than it has earned:
 
 - **Classification only.** Binary and multiclass. A continuous target is
   refused with an explanation rather than silently bucketed.
-- **The access code is separation, not authentication.** It keeps tenants out of
-  each other's workspaces in the UI. Anyone with filesystem access can read
-  everything. Putting this in front of real students means putting a real
+- **A workspace is separation, not authentication.** There is no login: anyone
+  reaching the app can open any workspace, and anyone with filesystem access can
+  read everything. Putting this in front of real students means putting a real
   identity provider in front of it first.
 - **Attribution is ablation, not SHAP.** One field at a time, so the numbers
   rank influence rather than decomposing it exactly, and interactions are

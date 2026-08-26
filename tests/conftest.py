@@ -121,10 +121,7 @@ def workspace_root(tmp_path, monkeypatch):
 def workspace(workspace_root):
     from placement_ai.registry.workspace import WorkspaceStore
 
-    store = WorkspaceStore(workspace_root)
-    created, code = store.create("Test Org", "fixture workspace")
-    created.access_code_for_tests = code  # type: ignore[attr-defined]
-    return created
+    return WorkspaceStore(workspace_root).create("Test Org", "fixture workspace")
 
 
 @pytest.fixture(scope="session")

@@ -23,28 +23,37 @@ from placement_ai.registry.workspace import WorkspaceError, WorkspaceStore
 # ── workspaces ───────────────────────────────────────────────────────────────
 
 
-def test_creating_a_workspace_returns_its_code_once(workspace_root):
+def test_creating_a_workspace_slugs_its_name(workspace_root):
     store = WorkspaceStore(workspace_root)
-    created, code = store.create("St Xavier College", "Placement cell")
+    created = store.create("St Xavier College", "Placement cell")
     assert created.name == "St Xavier College"
     assert created.id.startswith("st-xavier-college-")
-    assert len(code) == 8
-    # Only the hash is persisted, so the code cannot be read back off disk.
-    assert code not in created.config_path.read_text(encoding="utf-8")
+    assert created.config_path.exists()
 
 
-def test_the_right_code_opens_and_a_wrong_one_does_not(workspace_root):
+def test_opening_needs_no_code_and_a_missing_one_says_so(workspace_root):
+    """There is no login. Opening resolves an id; the only failure is a gone one."""
     store = WorkspaceStore(workspace_root)
-    created, code = store.create("Acme")
-    assert store.open(created.id, code).id == created.id
-    with pytest.raises(WorkspaceError, match="access code"):
-        store.open(created.id, "WRONGXXX")
+    created = store.create("Acme")
+    assert store.open(created.id).id == created.id
+    with pytest.raises(WorkspaceError, match="no longer exists"):
+        store.open("never-existed-0000")
 
 
-def test_an_access_code_is_case_insensitive(workspace_root):
+def test_a_workspace_written_with_an_old_code_hash_still_loads(workspace_root):
+    """Workspaces created before codes were dropped keep working, minus the key."""
     store = WorkspaceStore(workspace_root)
-    created, code = store.create("Acme")
-    assert store.open(created.id, code.lower()).id == created.id
+    created = store.create("Legacy")
+    created.config_path.write_text(
+        created.config_path.read_text(encoding="utf-8").replace(
+            '"id":', '"code_hash": "deadbeef", "id":', 1
+        ),
+        encoding="utf-8",
+    )
+    reopened = store.open(created.id)
+    assert reopened.name == "Legacy"
+    reopened.save()
+    assert "code_hash" not in created.config_path.read_text(encoding="utf-8")
 
 
 def test_a_nameless_workspace_is_refused(workspace_root):
@@ -54,8 +63,8 @@ def test_a_nameless_workspace_is_refused(workspace_root):
 
 def test_two_workspaces_with_the_same_name_stay_separate(workspace_root):
     store = WorkspaceStore(workspace_root)
-    first, _ = store.create("City College")
-    second, _ = store.create("City College")
+    first = store.create("City College")
+    second = store.create("City College")
     assert first.id != second.id
     assert len(store.list()) == 2
 
@@ -69,23 +78,14 @@ def test_listing_scans_the_directory_rather_than_an_index(workspace_root):
     assert {w.name for w in store.list()} == {"One", "Two"}
 
 
-def test_resetting_the_code_invalidates_the_old_one(workspace_root):
+def test_deleting_removes_the_whole_directory(workspace_root):
     store = WorkspaceStore(workspace_root)
-    created, original = store.create("Acme")
-    replacement = store.reset_code(created.id)
-    assert replacement != original
-    with pytest.raises(WorkspaceError):
-        store.open(created.id, original)
-    assert store.open(created.id, replacement).id == created.id
-
-
-def test_deleting_requires_the_code(workspace_root):
-    store = WorkspaceStore(workspace_root)
-    created, code = store.create("Acme")
-    with pytest.raises(WorkspaceError):
-        store.delete(created.id, "NOPE")
-    store.delete(created.id, code)
+    created = store.create("Acme")
+    store.delete(created.id)
     assert store.get(created.id) is None
+    assert not created.root.exists()
+    with pytest.raises(WorkspaceError):
+        store.delete(created.id)
 
 
 def test_a_directory_without_a_config_is_not_a_workspace(workspace_root):
@@ -202,8 +202,8 @@ def test_a_failed_save_leaves_no_half_written_version(workspace, trained, monkey
 
 def test_one_workspace_cannot_see_another_workspaces_models(workspace_root, trained):
     store = WorkspaceStore(workspace_root)
-    first, _ = store.create("First")
-    second, _ = store.create("Second")
+    first = store.create("First")
+    second = store.create("Second")
     ModelStore(first).save(trained)
     assert len(ModelStore(first).list()) == 1
     assert ModelStore(second).list() == []
@@ -277,8 +277,8 @@ def test_a_batch_shares_one_identifier(workspace):
 
 def test_history_is_per_workspace(workspace_root):
     store = WorkspaceStore(workspace_root)
-    first, _ = store.create("First")
-    second, _ = store.create("Second")
+    first = store.create("First")
+    second = store.create("Second")
     PredictionHistory(first.history_path).log(entry())
     assert PredictionHistory(first.history_path).count() == 1
     assert PredictionHistory(second.history_path).count() == 0

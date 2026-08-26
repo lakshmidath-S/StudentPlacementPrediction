@@ -150,8 +150,8 @@ version report the mismatch at load time rather than failing obscurely.
 
 The gaps that matter, in order:
 
-1. **Authentication.** The workspace access code separates tenants in the UI. It
-   is not authentication and does not pretend to be. Put an identity provider in
+1. **Authentication.** There is none. Workspaces separate tenants in the UI and
+   anyone reaching the app can open any of them. Put an identity provider in
    front and map users to workspaces.
 2. **Encryption at rest.** Uploaded spreadsheets and prediction history sit in
    plain files. Use an encrypted volume.

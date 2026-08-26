@@ -5,7 +5,7 @@ Tenancy: one directory per organisation.
 
     workspaces/
       acme-college-4f2a/
-        workspace.json      name, access code hash, timestamps
+        workspace.json      name, description, timestamps
         models/<version>/   one trained bundle per directory
         history.db          this workspace's predictions
         datasets/           snapshots of what was uploaded
@@ -14,39 +14,29 @@ There is deliberately no central index file. Listing scans directories, so two
 people creating a workspace at the same moment cannot corrupt a shared registry
 — a real risk in Streamlit, where every browser session runs the same script.
 
-On the access code: it separates tenants, it is not authentication. The hash
-stops a code being read out of the directory, but anyone with filesystem access
-can read every workspace's data. That trade is fine for a single-team
-deployment and is documented rather than dressed up; putting this in front of
-real students means putting a real identity provider in front of it first.
+There is no access code and no login. A workspace separates one organisation's
+data from another's in the UI; it never was authentication — the hash it used to
+carry stopped nobody with filesystem access from reading every workspace on
+disk, while costing an ordinary user a code to lose. Putting this in front of
+real students means putting a real identity provider in front of it first, and
+that provider is what should decide who may open which workspace.
 """
 
 from __future__ import annotations
 
-import hashlib
 import secrets
 import shutil
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 from placement_ai.config import WORKSPACE_ROOT
 from placement_ai.utils import read_json, slugify, utc_now_iso, write_json
 
 WORKSPACE_FILE = "workspace.json"
-CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"  # no I/O/0/1 to survive being read aloud
-CODE_LENGTH = 8
 
 
 class WorkspaceError(RuntimeError):
     """Something went wrong opening or creating a workspace."""
-
-
-def _hash_code(code: str) -> str:
-    return hashlib.sha256(code.strip().upper().encode("utf-8")).hexdigest()
-
-
-def generate_code() -> str:
-    return "".join(secrets.choice(CODE_ALPHABET) for _ in range(CODE_LENGTH))
 
 
 @dataclass
@@ -57,8 +47,6 @@ class Workspace:
     created_at: str
     root: Path
     active_model: str | None = None
-    # repr=False so the hash never lands in a log line or a Streamlit debug dump.
-    _code_hash: str = field(default="", repr=False)
 
     @property
     def models_dir(self) -> Path:
@@ -85,12 +73,8 @@ class Workspace:
                 "description": self.description,
                 "created_at": self.created_at,
                 "active_model": self.active_model,
-                "code_hash": self._code_hash,
             },
         )
-
-    def verify_code(self, code: str) -> bool:
-        return secrets.compare_digest(self._code_hash, _hash_code(code))
 
     def set_active_model(self, version: str | None) -> None:
         self.active_model = version
@@ -111,7 +95,10 @@ class WorkspaceStore:
             data = read_json(config)
         except (ValueError, OSError):
             return None
-        workspace = Workspace(
+        # A workspace written before access codes were dropped still carries a
+        # "code_hash" key here. Ignoring it is the whole migration; the next
+        # save drops it.
+        return Workspace(
             id=str(data.get("id", directory.name)),
             name=str(data.get("name", directory.name)),
             description=str(data.get("description", "")),
@@ -119,8 +106,6 @@ class WorkspaceStore:
             root=directory,
             active_model=data.get("active_model"),
         )
-        workspace._code_hash = str(data.get("code_hash", ""))
-        return workspace
 
     def list(self) -> list[Workspace]:
         """Every workspace on disk, newest first."""
@@ -136,17 +121,8 @@ class WorkspaceStore:
     def get(self, workspace_id: str) -> Workspace | None:
         return self._load(self.root / workspace_id)
 
-    def create(
-        self,
-        name: str,
-        description: str = "",
-        access_code: str | None = None,
-    ) -> tuple[Workspace, str]:
-        """Create a workspace, returning it with its access code in the clear.
-
-        The plaintext code is returned exactly once — only its hash is stored,
-        so a lost code cannot be recovered, only reset.
-        """
+    def create(self, name: str, description: str = "") -> Workspace:
+        """Create a workspace directory and the config that makes it one."""
         name = name.strip()
         if not name:
             raise WorkspaceError("A workspace needs a name.")
@@ -159,7 +135,6 @@ class WorkspaceStore:
         if directory.exists():
             raise WorkspaceError(f"A workspace directory already exists at {directory}.")
 
-        code = (access_code or generate_code()).strip().upper()
         directory.mkdir(parents=True, exist_ok=True)
         (directory / "models").mkdir(exist_ok=True)
         (directory / "datasets").mkdir(exist_ok=True)
@@ -171,29 +146,16 @@ class WorkspaceStore:
             created_at=utc_now_iso(),
             root=directory,
         )
-        workspace._code_hash = _hash_code(code)
         workspace.save()
-        return workspace, code
-
-    def open(self, workspace_id: str, access_code: str) -> Workspace:
-        workspace = self.get(workspace_id)
-        if workspace is None:
-            raise WorkspaceError("That workspace no longer exists.")
-        if not workspace.verify_code(access_code):
-            raise WorkspaceError("That access code does not match this workspace.")
         return workspace
 
-    def reset_code(self, workspace_id: str) -> str:
-        """Issue a new access code. Whoever can reach the disk can do this."""
+    def open(self, workspace_id: str) -> Workspace:
         workspace = self.get(workspace_id)
         if workspace is None:
-            raise WorkspaceError("That workspace no longer exists.")
-        code = generate_code()
-        workspace._code_hash = _hash_code(code)
-        workspace.save()
-        return code
+            raise WorkspaceError("That workspace no longer exists. Create one to continue.")
+        return workspace
 
-    def delete(self, workspace_id: str, access_code: str) -> None:
+    def delete(self, workspace_id: str) -> None:
         """Remove a workspace and everything in it. There is no undo."""
-        workspace = self.open(workspace_id, access_code)
+        workspace = self.open(workspace_id)
         shutil.rmtree(workspace.root)

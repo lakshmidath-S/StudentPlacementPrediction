@@ -144,9 +144,7 @@ def profile_upload(data: bytes, name: str) -> tuple[pd.DataFrame, list[str], int
 # 3. SESSION STATE
 # =============================================================================
 st.session_state.setdefault("workspace_id", None)
-st.session_state.setdefault("workspace_code", "")
 st.session_state.setdefault("last_trained", None)
-st.session_state.setdefault("new_workspace_code", None)
 st.session_state.setdefault("prediction", None)
 st.session_state.setdefault("use_sample", False)
 
@@ -157,8 +155,8 @@ def current_workspace() -> Workspace | None:
 
 
 def close_workspace() -> None:
-    for key in ("workspace_id", "workspace_code", "last_trained", "prediction"):
-        st.session_state[key] = None if key != "workspace_code" else ""
+    for key in ("workspace_id", "last_trained", "prediction"):
+        st.session_state[key] = None
 
 
 # =============================================================================
@@ -184,7 +182,13 @@ def render_sidebar() -> Workspace | None:
 
 
 def render_workspace_gate(store: WorkspaceStore) -> None:
-    """Create or open a workspace. Nothing else in the app works until one is."""
+    """Pick or create a workspace. Nothing else in the app works until one is.
+
+    No code, no login: a workspace keeps one organisation's data apart from
+    another's, which is separation and never was authentication. Anything that
+    needs to decide *who* may open one belongs in an identity provider in front
+    of this app, not in a passphrase a placement officer has to keep.
+    """
     existing = store.list()
 
     open_tab, create_tab = st.tabs(["Open", "Create"])
@@ -198,15 +202,13 @@ def render_workspace_gate(store: WorkspaceStore) -> None:
                 options=[w.id for w in existing],
                 format_func=lambda wid: next(w.name for w in existing if w.id == wid),
             )
-            code = st.text_input("Access code", type="password", key="open_code")
             if st.button("Open", type="primary", width="stretch"):
                 try:
-                    opened = store.open(choice, code)
+                    opened = store.open(choice)
                 except WorkspaceError as exc:
                     st.error(str(exc))
                 else:
                     st.session_state["workspace_id"] = opened.id
-                    st.session_state["workspace_code"] = code
                     st.rerun()
 
     with create_tab:
@@ -214,19 +216,12 @@ def render_workspace_gate(store: WorkspaceStore) -> None:
         description = st.text_input("Description", placeholder="Placement cell 2026")
         if st.button("Create workspace", type="primary", width="stretch"):
             try:
-                created, code = store.create(name, description)
+                created = store.create(name, description)
             except WorkspaceError as exc:
                 st.error(str(exc))
             else:
                 st.session_state["workspace_id"] = created.id
-                st.session_state["workspace_code"] = code
-                st.session_state["new_workspace_code"] = code
                 st.rerun()
-
-    if st.session_state.get("new_workspace_code"):
-        st.success("Workspace created.")
-        st.code(st.session_state["new_workspace_code"], language=None)
-        st.caption("Save this access code — it is shown once and cannot be recovered.")
 
 
 def render_workspace_panel(workspace: Workspace) -> None:
@@ -237,13 +232,6 @@ def render_workspace_panel(workspace: Workspace) -> None:
     st.success(f"**{workspace.name}**", icon=":material/domain:")
     if workspace.description:
         st.caption(workspace.description)
-
-    if st.session_state.get("new_workspace_code"):
-        st.warning("Access code — shown once:", icon=":material/key:")
-        st.code(st.session_state["new_workspace_code"], language=None)
-        if st.button("I have saved it", width="stretch"):
-            st.session_state["new_workspace_code"] = None
-            st.rerun()
 
     st.markdown("##### :material/model_training: Active model")
     if not bundles:

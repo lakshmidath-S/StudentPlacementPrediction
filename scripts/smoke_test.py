@@ -63,8 +63,8 @@ def main() -> int:
 
     step(1, "Creating a workspace")
     store = WorkspaceStore(Path(_TEMP_HOME))
-    workspace, code = store.create("Smoke Test College")
-    assert store.open(workspace.id, code).id == workspace.id
+    workspace = store.create("Smoke Test College")
+    assert store.open(workspace.id).id == workspace.id
     print(f"      {workspace.id}")
 
     step(2, "Loading the bundled sample")
